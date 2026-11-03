@@ -1,6 +1,7 @@
 ---
 name: quadron
-description: Use when the person works with their Quadron record over the Quadron MCP connector (tools named quad_* and future_you_capture). Triggers: "remember this", "note that", "keep this", "what do I already think about", "what did I decide", "my projects", "my record", "Quadron", a new line of work starting, or a decision the person states in their own words. Keeps capture to the person's own approved words and recall to the Quadron tools.
+description: >-
+  Use when the person works with their Quadron record over the Quadron MCP connector (tools named quad_* and future_you_capture). Triggers: "remember this", "note that", "keep this", "what do I already think about", "what did I decide", "my projects", "my record", "Quadron", a new line of work starting, or a decision the person states in their own words. Keeps capture to the person's own approved words and recall to the Quadron tools.
 ---
 
 # Quadron over MCP
