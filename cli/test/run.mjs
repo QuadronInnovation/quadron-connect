@@ -93,6 +93,11 @@ for (const imperative of ["you must", "You must", "always call", "do not wait", 
   check(!inj.includes(imperative), `★ injected context contains no directive ("${imperative}")`);
 }
 check(sessionStart.render([]) === "", "no projects means no output, not an empty banner");
+// ★ A project named "Hello, Quadron" is ONE project. Rendered unquoted in a comma list it reads as
+//   two; quoting each name keeps the comma inside the name where the model can see it belongs.
+const quoted = sessionStart.render([{ name: "Hello, Quadron" }, { name: "Gearbx" }]);
+check(quoted.includes('Their active projects are: "Hello, Quadron", "Gearbx".'),
+      "★ names are quoted so a comma inside a name cannot read as a separator");
 
 // ── parsing the server's project list ─────────────────────────────────────────────────────────
 // ★ The default seed Quad is named "Hello, Quadron" — a project name WITH A COMMA IN IT. The
@@ -112,10 +117,15 @@ const enriched = sessionStart.parseProjects(GROUND("Hello, Quadron (3 recorded j
 check(enriched.length === 2 && enriched[0].name === "Hello, Quadron",
       "★ the judgment-count suffix is stripped without eating the comma in the name");
 
-// A server older than this package still speaks commas. That path cannot be made correct — it is a
-// fallback, not a supported one — but it must not crash or drop everything.
-const legacy = sessionStart.parseProjects(GROUND("Skill Compose, Gearbx"));
-check(legacy.length === 2, "the legacy comma separator still parses");
+// ★ ONE project has no separator. The old "contains ' · '" test fell back to a comma split here and
+//   turned the seed Quad into two projects on every single-project record.
+const single = sessionStart.parseProjects(GROUND("Hello, Quadron"));
+check(single.length === 1 && single[0].name === "Hello, Quadron",
+      "★ a single comma-containing project stays ONE project");
+// A comma is always part of a name now; nothing splits on it.
+const commaName = sessionStart.parseProjects(GROUND("Skill Compose, Gearbx"));
+check(commaName.length === 1 && commaName[0].name === "Skill Compose, Gearbx",
+      "a comma inside a lone name is never a separator");
 
 check(sessionStart.parseProjects("Expertise recall is temporarily unavailable.") === null,
       "★ a non-grounding response yields null so the caller passes the text through untouched");

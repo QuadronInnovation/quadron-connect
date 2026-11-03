@@ -53,7 +53,9 @@ function render(projects) {
   if (!names.length) return "";
   const lines = [
     "Quadron is connected, and this person keeps a record of their own expertise in it.",
-    `Their active projects are: ${names.join(", ")}.`,
+    // Each name is quoted: a project may be called "Hello, Quadron", and an unquoted comma list
+    // would state it to the model as two projects (the split-then-join fallback below hides it).
+    `Their active projects are: ${names.map((n) => JSON.stringify(n)).join(", ")}.`,
     "Their prior decisions, standards and methods are readable through the Quadron tools —" +
       " quad_context for a working frame on a topic, quad_recall within one project," +
       " quad_search across all of them.",
@@ -65,16 +67,17 @@ function render(projects) {
 // ★ The list arrives " · "-separated because a project name may CONTAIN a comma — the default seed
 //   Quad is named "Hello, Quadron". Splitting on "," turned that one Quad into two projects that do
 //   not exist ("Hello", "Quadron") and then stated them to the model as fact; the rendered line looked
-//   right because split-then-join round-trips, which is why it went unnoticed. The comma branch stays
-//   only for a server older than this package — it carries the old ambiguity and cannot be made
-//   correct, so it is a fallback, not a supported path.
+//   right because split-then-join round-trips, which is why it went unnoticed. A list with ONE
+//   project has no separator at all, so "does the text contain ' · '" is not a test for the new
+//   format: the old comma fallback fired on exactly the seed Quad. Every server since 2026-08 sends
+//   " · ", so the split is unconditional and a comma is always part of a name.
 //
 // Extracted from main() to be testable at all. An inline parser is one whose logic never gets checked.
 function parseProjects(txt) {
   const match = txt.match(/^Active Quadron projects:\s*(.+?)\.(?:\s|$)/);
   if (!match) return null;
   const raw = match[1];
-  const names = (raw.includes(" · ") ? raw.split(" · ") : raw.split(","))
+  const names = raw.split(" · ")
     .map((s) => s.replace(/\s*\(\d+ recorded judgment.*?\)/, "").trim())
     .filter(Boolean);
   return names.map((name) => ({ name }));
