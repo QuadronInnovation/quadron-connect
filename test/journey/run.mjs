@@ -84,7 +84,7 @@ const ROWS = {
       {
         maxTurns: 6,
         tools: ["Skill", q("quad_context"), q("quad_search"), q("quad_recall")],
-        prompt: "Decision: the Claude Code plugin ships recall only; capture happens through quad_commit with my approval, never from a hook. Project: quadron-connect.",
+        prompt: "Decision: the Claude Code plugin ships recall only; capture happens through the capture tool with my approval, never from a hook. Project: quadron-connect.",
       },
       {
         maxTurns: 4,
