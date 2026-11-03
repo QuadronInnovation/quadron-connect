@@ -51,6 +51,12 @@ const SESSION_PLACEHOLDER = "<turn-1 session id>";
 const CAPTURE_PLACEHOLDER = "<captureTool>";
 const CAPTURE_RE = /future_you_capture|quad_commit/;
 const DISALLOWED = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"];
+// The T4 decision as saved; a read-back or a T6 answer must quote it, not merely name the project.
+const SAVED_WORDING = "recall only";
+const REVIEW_PENDING_RE = /Saved for your review/;
+// The clean reply reads "WITHHELD (IP firewall): nothing withheld"; only a withheld count matches.
+const WITHHELD_RE = /WITHHELD \(IP firewall\): (?!nothing)|IP firewall: \(\d+ withheld/;
+const NOTHING_RE = /FIT: no_match|Nothing SURFACED|Nothing recorded/;
 
 const USAGE = `Usage: node test/journey/run.mjs --out <dir> [--rows P,T3,T4,T5,T6] [--assume-write] [--dry-run] [--claude <path>] [--help]
 
@@ -93,8 +99,8 @@ const ROWS = {
       },
       {
         maxTurns: 4,
-        tools: ["Skill", q("quad_recall"), q("quad_read"), q("quad_search")],
-        prompt: "Read back the note you just saved in the quadron-connect project with quad_recall and quote it exactly, with its project name.",
+        tools: ["Skill", q("quad_recall"), q("quad_read"), q("quad_search"), q("quad_judgment_status")],
+        prompt: "Read back the note you just saved in the quadron-connect project with quad_recall and quote it exactly, with its project name. If it is still pending review, say so.",
       },
     ],
   },
@@ -361,7 +367,7 @@ function parseStream(text) {
           : Array.isArray(b.content) ? b.content.filter((c) => c.type === "text").map((c) => c.text).join("\n") : "";
         const meta = metas.find((m) => m.tool_use_id === b.tool_use_id) || (metas.length === 1 ? metas[0] : null);
         const pd = meta?.permission_decision;
-        s.tool_results.push({ tool_use_id: b.tool_use_id, is_error: !!b.is_error, text: txt.slice(0, 600),
+        s.tool_results.push({ tool_use_id: b.tool_use_id, is_error: !!b.is_error, text: txt.slice(0, 2000),
           permission_decision: pd?.decision ?? null, permission_source: pd?.source ?? null });
       }
     } else if (o.type === "result") {
@@ -440,8 +446,13 @@ function verdictT4(t, captureTool) {
     else if (r.is_error) fails.push("turn 2 capture result is an error");
     if (isDenied(b, u.id)) fails.push("turn 2 capture was denied");
   }
-  // turn 3: read-back
-  if (!resultText(c).includes("recall only")) fails.push('turn 3 result does not contain "recall only"');
+  // turn 3: read-back. When the server parked the capture in its review lane ("Saved for your
+  // review"), the note is not readable yet: the read-back must report the pending review instead,
+  // and T6 needs the person to confirm it in the app first.
+  if (REVIEW_PENDING_RE.test(r?.text ?? "")) {
+    notes.push("capture pending review in the app; confirm it there before T6");
+    if (!/review/i.test(resultText(c))) fails.push("turn 3 result does not report the pending review");
+  } else if (!resultText(c).includes(SAVED_WORDING)) fails.push(`turn 3 result does not quote the saved decision ("${SAVED_WORDING}")`);
   let accepted = 0, denied = 0;
   for (const s of [a, b, c]) for (const x of s.tool_uses.filter((y) => CAPTURE_RE.test(y.name))) {
     const rr = resultOf(s, x.id);
@@ -469,12 +480,25 @@ function verdictT5(t) {
   return { verdict: "PASS-MECHANICAL", review: true, notes: flags, review_texts: [resultText(a), resultText(b)] };
 }
 
+// A T6 answer passes only when it quotes the saved decision with its project. Naming the project
+// alone is not enough: a run once passed on an offer to capture something new into the project
+// while every read came back empty. A read the IP firewall withheld, with nothing surfaced by any
+// read tool, fails outright.
 function verdictT6(t) {
   const s = t[0].parsed;
   const fails = [];
+  const notes = [];
   if (!calledTool(s, /quad_context|quad_search/)) fails.push("no quad_context/quad_search call");
+  const reads = s.tool_results.filter((r) => /quad_context|quad_search|quad_recall|quad_read/.test(s.tool_uses.find((u) => u.id === r.tool_use_id)?.name ?? ""));
+  const fits = reads.map((r) => r.text.match(/^FIT:\s*(\S+)/m)?.[1]).filter(Boolean);
+  if (fits.length) notes.push(`FIT: ${fits.join(", ")}`);
+  const withheld = reads.filter((r) => WITHHELD_RE.test(r.text)).length;
+  const surfaced = reads.some((r) => !r.is_error && !NOTHING_RE.test(r.text));
+  if (withheld) notes.push(`withheld lines: ${withheld}; surfaced reads: ${surfaced ? "yes" : "none"}`);
+  if (withheld && !surfaced) fails.push("IP firewall withheld the match and no read surfaced anything");
   if (!resultText(s).includes("quadron-connect")) fails.push('result does not name "quadron-connect"');
-  return { verdict: fails.length ? "FAIL" : "PASS", notes: fails };
+  if (!resultText(s).includes(SAVED_WORDING)) fails.push(`result does not quote the saved decision ("${SAVED_WORDING}")`);
+  return { verdict: fails.length ? "FAIL" : "PASS", notes: [...fails, ...notes] };
 }
 
 // ---------------------------------------------------------------- summary.md
