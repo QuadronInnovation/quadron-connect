@@ -1,0 +1,11 @@
+{
+  "name": "quadron-marketplace",
+  "owner": { "name": "Quadron Innovation" },
+  "plugins": [
+    {
+      "name": "quadron",
+      "source": "./plugins/claude-code",
+      "description": "Read the person's Quadron record and capture only what they approve, over the Quadron MCP connector."
+    }
+  ]
+}

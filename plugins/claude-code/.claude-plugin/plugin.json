@@ -1,0 +1,8 @@
+{
+  "name": "quadron",
+  "version": "0.1.0",
+  "description": "Read the person's Quadron record and capture only what they approve, over the Quadron MCP connector.",
+  "author": { "name": "Quadron Innovation" },
+  "homepage": "https://quadron.tech/mcp",
+  "keywords": ["quadron", "mcp", "memory", "record"]
+}
