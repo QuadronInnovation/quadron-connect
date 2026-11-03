@@ -5,8 +5,6 @@ when to read the person's Quadron record and what it may write to it. The transp
 (registering the connector URL and signing in) stays with `claude mcp add` or
 `npx @quadron/connect`; the recall-at-session-start hook lives in `cli/` of this repository.
 
-Tracks quadron-retail-backend issue #944 (publish the MCP connector to plugin marketplaces and directories).
-
 ## Layout
 
 ```
@@ -27,10 +25,10 @@ claude plugin marketplace add QuadronInnovation/quadron-connect
 claude plugin install quadron@quadron-marketplace
 ```
 
-Then connect the record, on this host with local scope only:
+Then connect the record (local scope keeps the registration inside one project directory):
 
 ```
-claude mcp add --transport http quadron --scope local https://staging.mcp.quadron.tech/mcp
+claude mcp add --transport http quadron --scope local https://mcp.quadron.tech/mcp
 ```
 
 Sign in through `/mcp` inside Claude Code. The skill does nothing until a `quad_*` tool is
@@ -51,9 +49,8 @@ present.
 
 ## Verification still to run
 
-Recorded here when done, with command, cwd, exit code and output, per the debrief
-standard. Henry runs these against staging with his own sign-in; agents never enter
-credentials.
+Recorded here when done, with command, cwd, exit code and output. The checks run against the
+staging connector with a personal sign-in; no credential is ever written into this repository.
 
 | Id | Check | Result |
 |----|-------|--------|
@@ -66,9 +63,6 @@ credentials.
 
 ## Known follow-ups
 
-- Frontend connector page (`app/mcp/page.tsx` in QuadronRetail, Claude Code entry in
-  `lib/mcp-install.js`): once the plugin is installable, that entry may want a second line
-  pointing at it. Its copy is exported into `docs/mcp-install.md` in quadron-retail-backend, so it is a frontend PR
-  paired with a backend doc export PR, both on Ratnam's MCP surface.
+- The Quadron connector page may add a line pointing at this plugin once it is installable; that copy is owned by the MCP server owner and changes with the server's install docs.
 - Decided 2 Nov: the plugin and its marketplace manifest live in this public repository
   (`.claude-plugin/marketplace.json` at the root), separate from the private backend.
