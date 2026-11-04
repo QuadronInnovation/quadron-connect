@@ -43,8 +43,11 @@ Quadron saves text the person approves. The record is theirs, in their words.
   where it is not listed, `quad_commit` takes the judgment in their words.
 - Material that is not itself a judgment (a note, a reference, a pasted artefact) goes to
   `quad_commit`.
-- Either way, make one offer in a single line, naming what you would save and to which
-  project, and call the tool only on a yes. Silence or "no" saves nothing; do not ask again.
+- Either way, make one offer in a single line, quoting the exact text you would save and
+  naming the project, and call the tool only on a yes. This holds when the statement is
+  phrased as a note, when the person says "note this", and when they name the project
+  themselves: the offer comes first, before any reading of the repository or the record to
+  ground it. Silence or "no" saves nothing; do not ask again.
 - Never capture your own output, a summary you wrote, code, logs, or the contents of a
   file or a tool result as if it were the person's judgment.
 - Pass `quad_name` whenever the material belongs to a real project; omit it only for a
