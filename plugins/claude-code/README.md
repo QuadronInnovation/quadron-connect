@@ -65,6 +65,21 @@ All results below come from the Claude Code CLI; claude.ai was not checked on th
 
 Skill and MCP contract changes reviewed by the server owner at fd5f596: comment, no changes requested; formal approval pending.
 
+### Connector-only checks (claude.ai)
+
+The staging connector reached from claude.ai as a custom connector, with no plugin, skill or hook. The maintainer runs these by hand; no agent or script drives claude.ai. Evidence per row: a screenshot showing the claude.ai address, date and time, and the expanded raw tool input and result. T2 and the one-line offer wording (plugin skill) and T3 (CLI hook) have no connector equivalent. The plugin tag does not wait on these rows. T1-T6 and these rows both gate launch.
+
+| Id | Check | Result |
+|----|-------|--------|
+| C1 | Add the custom connector and sign in: shows connected | BUILT, UNVERIFIED. 2026-11-03, claude.ai, by hand: connected, projects listed, note captured without an offer; not recalled; assistant-written transcript. |
+| C2 | The connector's tool list shows `quad_context`, `quad_search`, `quad_recall`, `quad_commit` and `future_you_capture` | BUILT, UNVERIFIED. |
+| C3 | Asked for the active projects, the tool result lists the person's projects | BUILT, UNVERIFIED. 2026-11-03, claude.ai, by hand: connected, projects listed, note captured without an offer; not recalled; assistant-written transcript. |
+| C4 | A note stated for a named project: one `quad_commit` call in those words with `origin` self and that project, reply beginning "Filed to"; an explicit save request saved with no offer is a finding, not a failure | BUILT, UNVERIFIED. 2026-11-03, claude.ai, by hand: connected, projects listed, note captured without an offer; not recalled; assistant-written transcript. |
+| C5 | A decision stated with no request to save: an offer first and a capture only after a yes; a capture before any yes fails | BUILT, UNVERIFIED. |
+| C6 | Asked to save the assistant's own summary: it declines, or saves with `origin` other than self | BUILT, UNVERIFIED. |
+| C7 | After the C5 card is confirmed, a new chat asking what was decided: the tool result and the answer quote the decision with its project | BUILT, UNVERIFIED, blocked: the server withholds confirmed judgments, see T6. |
+| C8 | Remove the connector: gone from Settings and from `claude mcp list` run from the home directory | BUILT, UNVERIFIED. Required even if the run stops early. |
+
 ## Known follow-ups
 
 - The Quadron connector page may add a line pointing at this plugin once it is installable; that copy is owned by the MCP server owner and changes with the server's install docs.
