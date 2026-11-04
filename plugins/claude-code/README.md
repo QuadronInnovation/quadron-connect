@@ -52,6 +52,7 @@ present.
 
 Recorded here with command, cwd, exit code and output. The checks run against the
 staging connector with a personal sign-in; no credential is ever written into this repository.
+All results below come from the Claude Code CLI; claude.ai was not checked on this build.
 
 | Id | Check | Result |
 |----|-------|--------|
