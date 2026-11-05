@@ -33,19 +33,21 @@ test("F17. T2 FAIL: an error result, an empty answer, no skill call, no result, 
   }
 });
 const skillRow = (...uses) => rec(init({ mcp_servers: [] }), ...uses, ok("An answer."));
-test("T2 skill name. input.skill passes, and so does input.name; the verdict returns no inputs", () => {
-  for (const input of [{ skill: "quadron:quadron", args: "x" }, { skill: "quadron:quadron" }, { name: "quadron:quadron" }, { name: "quadron:quadron", args: "x" }]) {
+test("T2 skill name. input.skill passes, and so does input.name when skill holds no name; the verdict returns no inputs", () => {
+  for (const input of [{ skill: "quadron:quadron", args: "x" }, { skill: "quadron:quadron" }, { name: "quadron:quadron" }, { name: "quadron:quadron", args: "x" }, { skill: "quadron:quadron", name: "other:skill" }, { skill: 1, name: "quadron:quadron" }]) {
     const v = verdictT2([skillRow(toolUse("s", "Skill", input))]);
     assert.equal(v.verdict, "PASS", JSON.stringify(input));
     assert.equal("skillInputs" in v, false);
   }
 });
-test("T2 skill name. the value anywhere but input.skill or input.name fails: in args beside another skill, or only nested", () => {
-  for (const input of [{ skill: "other:skill", args: "quadron:quadron" }, { a: { b: ["quadron:quadron"] } }, { args: { skill: "quadron:quadron" } }, { input: { name: "quadron:quadron" } }, { args: "quadron:quadron" }]) {
+test("T2 skill name. the value anywhere but the one field read fails: in name beside another skill, in args, or only nested", () => {
+  for (const input of [{ skill: "other:skill", name: "quadron:quadron" }, { skill: "other:skill", args: "quadron:quadron" }, { a: { b: ["quadron:quadron"] } }, { args: { skill: "quadron:quadron" } }, { input: { name: "quadron:quadron" } }, { args: "quadron:quadron" }]) {
     const v = verdictT2([skillRow(toolUse("s", "Skill", input))]);
     assert.equal(v.verdict, "FAIL", JSON.stringify(input));
-    assert.match(v.notes.join(" "), /1 of 1 Skill calls do not name quadron:quadron in input\.skill or input\.name/);
+    assert.match(v.notes.join(" "), /1 of 1 Skill calls do not name quadron:quadron in input\.skill, or else input\.name/);
   }
+  assert.equal(skillLabel({ skill: "other:skill", name: "quadron:quadron" }, new Redactor()), "other:skill");
+  assert.equal(skillLabel({ skill: "quadron:quadron", name: "other:skill" }, new Redactor()), "quadron:quadron");
 });
 test("T2 skill name. the labels: the skill value, then the name value, none, a non-string skill, and a long or control-character value reduced", () => {
   const label = (input) => skillLabel(input, new Redactor());
@@ -64,7 +66,7 @@ test("T2 skill name. another name, no string values or a non-object input fail",
   for (const input of [{ skill: "other:skill", args: "x" }, { skill: "quadron" }, { skill: "quadron:quadron " }, {}, { n: 1, ok: true }, "quadron:quadron", undefined]) {
     const v = verdictT2([skillRow(toolUse("s", "Skill", input))]);
     assert.equal(v.verdict, "FAIL", JSON.stringify(input));
-    assert.match(v.notes.join(" "), /1 of 1 Skill calls do not name quadron:quadron in input\.skill or input\.name/);
+    assert.match(v.notes.join(" "), /1 of 1 Skill calls do not name quadron:quadron in input\.skill, or else input\.name/);
   }
 });
 test("T2 skill name. every Skill call is held to it: a denied or errored one with another name fails beside a good call", () => {
