@@ -43,7 +43,7 @@ Run flags (all required unless --dry-run): --model <id> --effort <low|medium|hig
 Live also needs: --settings <file> --plugin-dir <dir> --config-dir <empty dir> --out <dir> [--mcp-url <url>]
   [--account-label <text>] [--row-timeout-seconds <n>] [--routing-blocked <reason>] [--override <file>]
   [--max-total-usd <n>] (lowers ${CAMPAIGN_CEILING_USD} USD, never raises it) [--max-output-tokens <n>] (lowers ${MAX_OUTPUT_TOKENS}, never raises it)
-Live also needs, from the launcher's environment only: QUADRON_CAMPAIGN_RECORD (an existing file outside the clone; empty is a total of zero),
+Live also needs, from the environment only: QUADRON_CAMPAIGN_RECORD (an existing file outside the clone; empty is a total of zero),
   QUADRON_CAMPAIGN_WORKSPACE, QUADRON_CAMPAIGN_ID.
 Other: --dry-run; --init-only [--expect-no-key] [--init-only-with-turn]; --mark-judgment-confirmed <id> --ledger <path>
 --ledger, --out and --config-dir must be outside the clone.
@@ -104,7 +104,7 @@ function dryReport(f, io, explicit, red) {
   out("DRY RUN: no calls made, no network, nothing spawned.");
   out(`model: ${set("model")}; effort: ${set("effort")}`);
   out(`ceilings (USD): session ${set("max-session-usd")}, run ${set("max-run-usd")}, total ${set("max-total-usd")}; ledger: ${set("ledger")}; expected account: ${set("expected-account")}`);
-  out(`campaign ceiling (USD): ${CAMPAIGN_CEILING_USD}; output limit: ${f["max-output-tokens"] ?? MAX_OUTPUT_TOKENS} tokens; a live run also needs the launcher's campaign record, which a dry run does not touch`);
+  out(`campaign ceiling (USD): ${CAMPAIGN_CEILING_USD}; output limit: ${f["max-output-tokens"] ?? MAX_OUTPUT_TOKENS} tokens; a live run also needs a campaign record, which a dry run does not touch`);
   if (modelFamily(f.model) && num(f["max-session-usd"]) !== null) {
     const w = worstCase({ model: f.model, sessionUsd: num(f["max-session-usd"]), maxOutputTokens: f["max-output-tokens"] ? Number(f["max-output-tokens"]) : MAX_OUTPUT_TOKENS });
     out(`one call's worst case (USD): ${w.reservationUsd.toFixed(5)} (session ${w.sessionUsd} + one more response ${w.responseUsd.toFixed(5)})`);

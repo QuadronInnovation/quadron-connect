@@ -251,7 +251,7 @@ test("H1. a corrupt or unreadable record refuses before any call, exit 2", async
     assert.equal(r.exitCode, 2, content);
     assert.equal(client.calls.length, 0, content);
     assert.match(d.io.errors.join(" "), /corrupt/, content);
-    assert.equal(nodefs.readFileSync(b.record, "utf8"), content); // left for a person to read
+    assert.equal(nodefs.readFileSync(b.record, "utf8"), content); // left on disk untouched
   }
   const dir = box();
   nodefs.unlinkSync(dir.record);

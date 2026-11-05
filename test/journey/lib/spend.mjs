@@ -153,7 +153,7 @@ export function closeCall(file, fs, data, entry, fields) {
 
 // An exclusive file next to the ledger, and another next to the campaign record, refuse concurrent
 // invocations, including two with different ledgers. A kill leaves them behind, so each is named in
-// the message and never removed automatically: only a person can know that no run is still live.
+// the message and never removed automatically: check by hand that no run is still live.
 export function takeLock(file, fs, label = "ledger") {
   const lock = `${file}.lock`;
   let fd;
@@ -208,14 +208,14 @@ export function checkAttempts(data, state, { row, model, head }) {
 // prerequisite. So each attempt the record holds for this row at this head, on any model, and for T4
 // when this is T6, must have its call in this ledger. A call is written to the record, then to the
 // ledger, both before the prompt, so a normal run always holds both. A kill between the two writes
-// refuses here too: only a person can say what that run did.
+// refuses here too: check by hand what that run did.
 export function checkLedgerMatchesRecord(data, state, { row, head, ledgerFile, recordFile }) {
   const lost = state.calls.filter((c) => c.head === head && isAttempt(c) && (c.row === row || (row === "T6" && c.row === "T4")) &&
     !data.entries.some((e) => e.kind === "call" && e.id === c.id));
   if (!lost.length) return;
   const rows = [...new Set(lost.map((c) => `${c.row} on ${c.model}`))].join(", ");
   throw new Refusal(`the campaign record (${path.basename(recordFile)}) holds ${lost.length} attempt(s) at this head that the ledger (${path.basename(ledgerFile)}) has no entry for: ${rows}. ` +
-    "Either this is the wrong ledger, or a run was killed after writing its reservation and before writing to the ledger. A person must look: nothing clears this automatically");
+    "Either this is the wrong ledger, or a run was killed after writing its reservation and before writing to the ledger. Check by hand: nothing clears this automatically");
 }
 
 // ------------------------------------------------------------------ judgment confirmation (T6)

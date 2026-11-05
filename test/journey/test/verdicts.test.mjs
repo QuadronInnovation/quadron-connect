@@ -1,7 +1,7 @@
 // Direct verdict tests, on the records collect() builds from messages shaped per the types.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OFFER_HEURISTIC_NOTE, STATUS_WINDOW_CHARS, T6_STATUS_NOTE, collect, isOffer, judgmentIdFrom, routingOf, savedWordingFrom, signedClaimField, turnGate, verdictIssue2, verdictT2, verdictT4, verdictT5, verdictT6 } from "../lib/verdicts.mjs";
+import { OFFER_HEURISTIC_NOTE, STATUS_WINDOW_CHARS, T6_STATUS_NOTE, collect, isOffer, judgmentIdFrom, reportsFailedWrite, routingOf, savedWordingFrom, signedClaimField, turnGate, verdictIssue2, verdictT2, verdictT4, verdictT5, verdictT6 } from "../lib/verdicts.mjs";
 import { CAPTURE, OFFER, READ, SKILL, assistantText, init, result, toolResult, toolUse } from "./helpers.mjs";
 
 const rec = (...msgs) => collect(msgs);
@@ -227,7 +227,7 @@ test("D3. the same record: another item's status does not count; plain text is r
   assert.equal(t6Struct({ items: [{ text: `A long body. ${SAVED}. Status: pending. ${"z".repeat(300)} Status: confirmed.` }] }).verdict, "FAIL"); // one string, read by window
 });
 
-test("T6 negations. the verifier's plain text cases read as negative, so FAIL: once, until, never, isn't, confirmed: no, confirmed: 0", () => {
+test("T6 negations. plain text cases read as negative, so FAIL: once, until, never, isn't, confirmed: no, confirmed: 0", () => {
   for (const text of ["Will be kept once confirmed", "Saved until confirmed", "It was never confirmed", "This isn't confirmed", "confirmed: no", "confirmed: 0"]) {
     const v = t6With(`${SAVED}. ${text}.`);
     assert.equal(v.verdict, "FAIL", text);
@@ -254,13 +254,13 @@ test("T6 negations. in JSON, as structure or inside a text block: confirmed 0, n
 });
 
 test("T6 negations. what stays positive: a value in another clause, another field's null or zero, and a marker with no qualifier in its clause", () => {
-  for (const text of ["Status: confirmed. No further action.", "Confirmed. 0 items withheld.", "Status: confirmed, no edits.", "Not related. Status: confirmed.", "Confirmed by the owner."]) {
+  for (const text of ["Status: confirmed. No further action.", "Confirmed. 0 items withheld.", "Status: confirmed, no edits.", "Not related. Status: confirmed.", "Confirmed by the user."]) {
     assert.equal(t6With(`${SAVED}. ${text}`).verdict, "PASS", text);
   }
   assert.equal(t6Struct({ items: [{ text: SAVED, confirmed: true, rejected_at: null, pending: 0, unconfirmed: null, rejected: false }] }).verdict, "PASS");
   assert.equal(t6Struct({ items: [{ text: SAVED, confirmed: 1 }] }).verdict, "PASS");
   assert.equal(t6Struct({ items: [{ text: SAVED, rejected_at: null }] }).verdict, "UNCONFIRMED");
-  assert.match(T6_STATUS_NOTE, /independent read of the evidence decides/);
+  assert.match(T6_STATUS_NOTE, /read the evidence/);
 });
 
 test("T6 structure. a status field on the record holding the wording decides: each key, confirmed values pass, negatives FAIL, others read UNCONFIRMED", () => {
@@ -285,7 +285,7 @@ test("T6 structure. the field outranks text: its record's own string, another fi
   assert.equal(t6Struct({ items: [{ text: SAVED, status: "pending" }] }, `${SAVED}. Status: confirmed.`).verdict, "FAIL");
 });
 
-test("T6 structure. only that object counts: a sibling's or another item's status does not, and neither does a list's envelope; the verifier's false results", () => {
+test("T6 structure. only that object counts: a sibling's or another item's status does not, and neither does a list's envelope; known false results", () => {
   assert.equal(t6Struct({ a: { text: SAVED }, b: { status: "confirmed" } }).verdict, "UNCONFIRMED"); // no list, status on a sibling
   assert.equal(t6Struct({ a: { text: SAVED, status: "confirmed" }, b: { status: "rejected" } }).verdict, "PASS"); // own confirmed, sibling rejected, no list
   assert.equal(t6Struct({ a: { text: SAVED, status: "pending" }, b: { status: "confirmed" } }).verdict, "FAIL");
@@ -487,4 +487,164 @@ test("G7. a judgment id outside the shared pattern is treated as not shown", () 
 test("collect keeps a tool result whole, far past any preview length", () => {
   const long = "x".repeat(5000);
   assert.equal(rec(toolUse("a", READ), toolResult("a", long)).tool_results[0].text.length, 5000);
+});
+
+// ---- a capture reply that reports a failed write
+const QUAD_COMMIT = "mcp__quadron__quad_commit";
+const CAPTURE_TOOLS = [CAPTURE, QUAD_COMMIT];
+const PHRASE = "may or may not be in the record";
+const initFor = (name) => init({ tools: ["Skill", name] });
+const offerFor = (name) => rec(initFor(name), ...said(OFFER));
+const replyFor = (name, text, { isError = false, structured } = {}) =>
+  rec(initFor(name), toolUse("u1", name, { quad_name: "quadron-connect", decided: SAVED }), toolResult("u1", text, isError, structured), ok("Saved."));
+const t4For = (name, text, opts) => verdictT4([offerFor(name), replyFor(name, text, opts)]);
+const FAILED_REPLIES = [
+  ["a JSON text", JSON.stringify({ ok: false, error: "not written" }), undefined],
+  ["a spaced JSON text", '{ "ok": false, "error": "not written" }', undefined],
+  ["a structured result", "see data", { ok: false }],
+  ["a structured result as JSON text", "see data", JSON.stringify({ ok: false })],
+];
+
+test("T4 fails on a reply reporting a failed write with is_error false, for both capture tools, in structured and text forms", () => {
+  for (const name of CAPTURE_TOOLS) {
+    for (const [form, text, structured] of FAILED_REPLIES) {
+      const v = t4For(name, text, { structured });
+      assert.equal(v.verdict, "FAIL", `${name} ${form}`);
+      assert.match(v.notes.join(" "), /accepted: 0/, `${name} ${form}`);
+      assert.match(v.notes.join(" "), /reports a failed write \(ok:false/, `${name} ${form}`);
+      assert.equal(v.captureTool, name);
+    }
+  }
+});
+const UNCONFIRMED_REPLY = "Could not confirm that was kept — it may or may not be in the record. Do not capture it again automatically; ask the person to check Memory first, because a second attempt would append rather than replace.";
+const assertFailedWrite = (v, why) => {
+  assert.equal(v.verdict, "FAIL", why);
+  assert.match(v.notes.join(" "), /accepted: 0/, why);
+  assert.match(v.notes.join(" "), /reports a failed write/, why);
+  assert.equal(v.savedWording, "not shown", why);
+};
+test("T4 fails on the server's could-not-confirm reply with is_error true, for both capture tools", () => {
+  for (const name of CAPTURE_TOOLS) assertFailedWrite(t4For(name, UNCONFIRMED_REPLY, { isError: true }), name);
+});
+test("T4 fails on the server's could-not-confirm reply with is_error false, for both capture tools", () => {
+  for (const name of CAPTURE_TOOLS) assertFailedWrite(t4For(name, UNCONFIRMED_REPLY), name);
+});
+test("T4 passes on a success reply that only mentions ok false below the top level or in prose, for both capture tools", () => {
+  const texts = (...blocks) => blocks.map((text) => ({ type: "text", text }));
+  const successes = [
+    ["pretty-printed JSON and a second block", texts(JSON.stringify({ ok: true, checks: [{ ok: false }] }, null, 2), "Done.")],
+    ["a prose line", "Saved for your review.\nok: false positives were dropped"],
+    ["indented nested ok in non-JSON text", 'Saved for your review.\nChecks:\n  "ok": false\nDone.'],
+  ];
+  for (const name of CAPTURE_TOOLS) {
+    for (const [form, content] of successes) {
+      const v = t4For(name, content);
+      assert.equal(v.verdict, "PASS", `${name} ${form}`);
+      assert.equal(v.savedWording, SAVED, `${name} ${form}`);
+    }
+  }
+});
+test("T4 fails on a reply holding the phrase that the write may not have landed, in any case and whatever its ok says, for both capture tools", () => {
+  for (const name of CAPTURE_TOOLS) {
+    for (const text of [`The capture ${PHRASE}.`, `THE CAPTURE ${PHRASE.toUpperCase()}.`, JSON.stringify({ ok: true, note: `It ${PHRASE}` }), JSON.stringify({ ok: false, message: `It ${PHRASE}` })]) {
+      const v = t4For(name, text);
+      assert.equal(v.verdict, "FAIL", `${name} ${text}`);
+      assert.match(v.notes.join(" "), /accepted: 0/, `${name} ${text}`);
+      assert.match(v.notes.join(" "), /reports a failed write/, `${name} ${text}`);
+    }
+  }
+});
+test("T4 still fails on an error reply, for both capture tools, with or without ok:false", () => {
+  for (const name of CAPTURE_TOOLS) {
+    for (const text of ["failed", JSON.stringify({ ok: false })]) {
+      const v = t4For(name, text, { isError: true });
+      assert.equal(v.verdict, "FAIL", `${name} ${text}`);
+      assert.match(v.notes.join(" "), /accepted: 0/, `${name} ${text}`);
+    }
+  }
+});
+test("T4 still passes on a normal success and on an ok:true reply, for both capture tools", () => {
+  for (const name of CAPTURE_TOOLS) {
+    for (const [text, structured] of [["Saved for your review", undefined], ["ok", undefined], [JSON.stringify({ ok: true }), undefined], ["see data", { ok: true }], ["ok:true", undefined]]) {
+      const v = t4For(name, text, { structured });
+      assert.equal(v.verdict, "PASS", `${name} ${text}`);
+      assert.equal(v.savedWording, SAVED, `${name} ${text}`);
+    }
+  }
+});
+test("T4 names no saved value from a failed write, an error reply or a denied call, for both capture tools", () => {
+  const reply = { judgment_id: "j1", signed_claim: "abc", quad: "quadron-connect" };
+  const none = (v, why) => {
+    assert.equal(v.verdict, "FAIL", why);
+    assert.equal(v.judgmentId, "not shown", why);
+    assert.equal(v.savedWording, "not shown", why);
+    assert.equal(v.routing, "not shown", why);
+    assert.deepEqual(v.signedClaim, { state: "absent" }, why);
+    assert.match(v.notes.join(" "), /judgment id: not shown/, why);
+    assert.doesNotMatch(v.notes.join(" "), /pending review/, why);
+  };
+  for (const name of CAPTURE_TOOLS) {
+    none(t4For(name, JSON.stringify({ ok: false, ...reply })), `${name} text`);
+    none(t4For(name, "Saved for your review", { structured: { ok: false, ...reply } }), `${name} structured`);
+    none(t4For(name, `judgment id: j1. Saved for your review, but it ${PHRASE}. quadron-connect`), `${name} phrase`);
+    none(t4For(name, JSON.stringify(reply), { isError: true }), `${name} error`);
+    const refused = replyFor(name, JSON.stringify(reply));
+    refused.denied_ids.add("u1");
+    none(verdictT4([offerFor(name), refused]), `${name} denied`);
+    const kept = t4For(name, JSON.stringify({ ok: true, ...reply }));
+    assert.equal(kept.verdict, "PASS", name);
+    assert.equal(kept.judgmentId, "j1", name);
+    assert.equal(kept.savedWording, SAVED, name);
+    assert.equal(kept.routing, "routed", name);
+    assert.deepEqual(kept.signedClaim, { state: "present", field: "signed_claim" }, name);
+  }
+});
+test("a capture attempt alone still fails its row when the reply reports a failed write", () => {
+  const FAILED = JSON.stringify({ ok: false, message: `It ${PHRASE}` });
+  for (const name of CAPTURE_TOOLS) {
+    const tried = (...more) => rec(init(), ...more, toolUse("c", name, {}), toolResult("c", FAILED), ok(OFFER));
+    const t2 = verdictT2([rec(init({ mcp_servers: [] }), SKILL(), toolUse("c", name, {}), toolResult("c", FAILED), ok("x"))]);
+    assert.equal(t2.verdict, "FAIL", name);
+    assert.match(t2.notes.join(" "), /Quadron tool/, name);
+    assert.match(turnGate("T4", rec(init(), toolUse("c", name, {}), toolResult("c", FAILED), ...said(OFFER))), /captured before confirmation/, name);
+    const early = verdictT4([rec(init(), toolUse("c", name, {}), toolResult("c", FAILED), ...said(OFFER)), turn2()]);
+    assert.equal(early.verdict, "FAIL", name);
+    assert.match(early.notes.join(" "), /captured before confirmation/, name);
+    for (const [v, which] of [[verdictT5([tried(), t5b()]), "turn 1"], [verdictT5([t5a(), tried()]), "turn 2"]]) {
+      assert.equal(v.verdict, "FAIL", `${name} ${which}`);
+      assert.match(v.notes.join(" "), new RegExp(`${which} called a capture tool`), name);
+    }
+    const t6 = verdictT6([tried(...read())], saved);
+    assert.equal(t6.verdict, "FAIL", name);
+    assert.match(t6.notes.join(" "), /a capture tool was called/, name);
+    const issue = verdictIssue2([rec(init(), toolUse("c", name, {}), toolResult("c", FAILED), ...said("Keep this: raw streams?"))]);
+    assert.equal(issue.verdict, "FAIL", name);
+    assert.match(issue.notes.join(" "), /a capture tool was called/, name);
+  }
+  const other = verdictT4([turn1(), rec(init(), toolUse("u1", CAPTURE, { quad_name: "quadron-connect" }), toolResult("u1", "Saved"), toolUse("u2", QUAD_COMMIT, {}), toolResult("u2", FAILED), ok("Saved."))]);
+  assert.equal(other.verdict, "FAIL");
+  assert.match(other.notes.join(" "), /another capture tool/);
+});
+test("a failed write is read at the reply's top level, and prose that only mentions ok is not one", () => {
+  const notFailed = [
+    { text: "ok" }, { text: "Saved, ok." }, { text: "It looks ok, false alarm." }, { text: "okay: false" }, { text: "not_ok: false" },
+    { text: "The check says ok: false in the middle of a sentence." }, { text: "ok: falsehood" }, { text: "" }, {},
+    { text: JSON.stringify({ ok: true }) }, { text: JSON.stringify({ ok: "false" }) }, { text: JSON.stringify({ ok: 0 }) }, { text: JSON.stringify({ ok: null }) },
+    { text: JSON.stringify({ ok: true, checks: [{ ok: false }] }) }, { text: JSON.stringify({ result: { ok: false } }) }, { text: JSON.stringify([{ ok: false }]) },
+    { text: `${JSON.stringify({ ok: true, checks: [{ ok: false }] })}\nDone.` },
+    { text: "ok:false" }, { text: "ok: false" }, { text: "OK = False" }, { text: '"ok": false' }, { text: "'ok': false" }, { text: '{"ok": false, not json' }, { text: "Not written.\nok: false" },
+    { text: '"ok": false, not written' }, { text: `${JSON.stringify({ error: "not written", ok: false })}\nTry again later.` },
+    { text: "x", structured: { ok: true } }, { text: "x", structured: { result: { ok: false } } }, { text: "x", structured: [{ ok: false }] }, { text: "x", structured: "ok:false" },
+  ];
+  for (const r of notFailed) assert.equal(reportsFailedWrite(r), false, JSON.stringify(r));
+  const failed = [
+    { text: `  ${JSON.stringify({ ok: false })}  ` },
+    { text: "x", structured: { ok: false } }, { text: JSON.stringify({ ok: true }), structured: { ok: false } }, { text: JSON.stringify({ ok: false }), structured: { ok: true } },
+    { text: `It ${PHRASE}.` }, { text: `IT ${PHRASE.toUpperCase()}.` },
+  ];
+  for (const r of failed) assert.equal(reportsFailedWrite(r), true, JSON.stringify(r));
+  assert.equal(reportsFailedWrite(null), false);
+  assert.equal(reportsFailedWrite(undefined), false);
+  const blocks = rec(toolUse("u", CAPTURE, {}), toolResult("u", [{ type: "text", text: JSON.stringify({ ok: false }) }, { type: "text", text: "Try again later." }])).tool_results[0];
+  assert.equal(reportsFailedWrite(blocks), false);
 });

@@ -1,7 +1,7 @@
-// Connector auth. The only path is a human-supplied refresh token for the staging TEST account
+// Connector auth. The only path is a refresh token for a staging test account
 // (QUADRON_CONNECTOR_REFRESH_TOKEN, _CLIENT_ID, _ISSUER), exchanged per row for an access token
 // that goes only into the MCP Authorization header. The refresh token never reaches the child
-// env or a file. No credential file of any person is read here.
+// env or a file. No credential file is read here.
 
 import { EXIT, Refusal } from "./guards.mjs";
 
@@ -75,8 +75,8 @@ export function identityFromToken(accessToken) {
 }
 
 // Returns {check, note}. A reported identity that differs from the expected account refuses.
-// Where none is reported the check is "not shown": a person must supply --account-label, which is
-// printed as a label. The expected account is never restated as one.
+// Where none is reported the check is "not shown": --account-label is required, and it is printed
+// as a label. The expected account is never restated as one.
 export function checkAccount(accessToken, expectedAccount, accountLabel) {
   const id = identityFromToken(accessToken);
   if (id === null) {

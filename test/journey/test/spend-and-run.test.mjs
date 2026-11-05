@@ -280,7 +280,7 @@ const refusesOnMismatch = (out, b) => {
   assert.deepEqual(out.client.prompts, []);
   const text = out.d.io.errors.join(" ");
   assert.ok(text.includes(path.basename(b.ledger)) && text.includes(path.basename(b.record)), text);
-  assert.match(text, /A person must look/);
+  assert.match(text, /Check by hand/);
   assert.match(text, /killed after writing its reservation/);
 };
 
@@ -316,7 +316,7 @@ test("ledger match. a new ledger loses neither T6's prerequisite nor a pass: T6 
   refusesOnMismatch(await run(copied, copied.argv("T2", { model: HAIKU }), [T2_OK()]), copied);
 });
 
-test("ledger match. a kill between the reservation and the ledger write refuses, and says a person is needed; so does the second attempt on a ledger holding only the first", async () => {
+test("ledger match. a kill between the reservation and the ledger write refuses, and says to check by hand; so does the second attempt on a ledger holding only the first", async () => {
   const b = box({ record: [attemptLine("killed")] });
   const out = await run(b, b.argv("T2"), [T2_OK()]);
   refusesOnMismatch(out, b);
@@ -373,7 +373,7 @@ test("G6. attempts count per row, model and head: a new head has its own, and a 
   assert.equal(rerun.client.calls.length, 0);
   assert.match(rerun.d.io.errors.join(" "), /already passed on Opus at this head/);
   const moved = box({ entries: [rowEntry({ head: OTHER, verdict: "PASS" })], record: [attemptLine("x", { head: OTHER })] });
-  assert.equal((await run(moved, moved.argv("T2"), [T2_OK()])).r.exitCode, 0); // the plan's re-run at a new head
+  assert.equal((await run(moved, moved.argv("T2"), [T2_OK()])).r.exitCode, 0); // a re-run at a new head
   const t6 = box({ entries: [...t6Ready(), rowEntry({ row: "T6", head: OTHER, verdict: "FAIL" })], record: [attemptLine("x", { row: "T6", head: OTHER })] });
   assert.equal((await run(t6, t6.argv("T6"), [T6_OK()])).r.exitCode, 0); // once per model per head
 });

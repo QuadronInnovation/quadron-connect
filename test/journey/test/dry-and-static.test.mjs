@@ -14,17 +14,16 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const JOURNEY = path.resolve(HERE, "..");
 const frag = (...p) => p.join("");
 
-// These two files come to test/journey from another PR. This branch neither owns nor depends on
-// them, in either form they may take, so the scans below leave them out.
-const OTHER_PR_FILES = new Set(["run.mjs", "README.md"]);
+// run.mjs and README.md are excluded from the scans, in either form they may take.
+const EXCLUDED_FILES = new Set(["run.mjs", "README.md"]);
 
-// node_modules is never entered, and neither of the other PR's files is opened.
+// node_modules is never entered, and neither excluded file is opened.
 function walk(dir, root = dir, out = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.name === "node_modules") continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, root, out);
-    else if (!(dir === root && OTHER_PR_FILES.has(e.name))) out.push(p);
+    else if (!(dir === root && EXCLUDED_FILES.has(e.name))) out.push(p);
   }
   return out;
 }
@@ -136,7 +135,7 @@ test("--dry-run refuses (exit 2) unless ANTHROPIC_BASE_URL parses as a loopback 
   }
 });
 
-test("the dry launcher's environment: dummy key, proxies, MCP URL and base URL at the closed port, empty home; succeeds quickly without reading the key or any file", async () => {
+test("the dry-run environment: dummy key, proxies, MCP URL and base URL at the closed port, empty home; succeeds quickly without reading the key or any file", async () => {
   const spy = spawnSpy();
   const b = box();
   try {
@@ -237,7 +236,7 @@ test("static scan: the entry is thin and no test names or imports it", () => {
   }
 });
 
-test("F24. nothing in the harness imports the other PR's runner file", () => {
+test("F24. nothing in the harness imports run.mjs, which is excluded from the scans", () => {
   const re = new RegExp(`(from|import\\s*\\(|require\\s*\\()\\s*["'][^"']*\\brun\\.mjs["']`);
   for (const p of files.filter((x) => /\.mjs$/.test(x))) assert.ok(!re.test(src(p)), rel(p));
 });

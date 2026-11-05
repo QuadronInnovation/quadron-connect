@@ -49,8 +49,8 @@ export function buildOptions({
   mcpServers, childEnv, cwd,
 }) {
   const o = {
-    settings: settingsPath, // flag-settings layer (sdk.d.ts:2271-2289), holds the no-browser deny rules
-    settingSources: [], // nothing from user or project files; the settings file above is the only layer
+    settings: settingsPath, // flag-settings layer (sdk.d.ts:2271-2289), holds the web and browser deny rules
+    settingSources: [], // nothing from user or project files; the settings given with --settings are the only layer
     env: childEnv,
     plugins: [{ type: "local", path: pluginDir }],
     strictMcpConfig: true,

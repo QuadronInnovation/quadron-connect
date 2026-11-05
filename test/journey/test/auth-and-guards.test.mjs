@@ -745,7 +745,7 @@ test("before the prompt. a stream already over stops with no prompt, exit 3, zer
   assert.equal(turn.r.exitCode, 5); // init forms keep 3 for a timeout alone
   assert.deepEqual(turn.client.prompts, []);
   assert.equal(t.charged(), 0);
-  const plain = box(); // no prompt on this form to hold back, and the owner's check reads its line
+  const plain = box(); // no prompt on this form to hold back, and a check by hand reads its line
   const i = await run(plain, plain.initArgv(), [{ messages: [], endsEarly: true }], { timeoutMs: 20 });
   assert.equal(i.r.exitCode, 0);
   assert.deepEqual(i.d.io.lines, ["AUTH_SOURCE=ANTHROPIC_API_KEY"]);
@@ -1229,9 +1229,9 @@ test("F14. no identity exposed: --account-label is required and printed as a lab
   assert.equal(missing.client.calls.length, 0);
   assert.match(missing.d.io.errors.join(" "), /--account-label/);
   const c = box();
-  const { r, d } = await run(c, c.argv("T4", {}, ["--account-label", "label-from-a-person"]), T4_OK(), { fetch: fetchStub({ identity: null }) });
+  const { r, d } = await run(c, c.argv("T4", {}, ["--account-label", "label-from-the-operator"]), T4_OK(), { fetch: fetchStub({ identity: null }) });
   assert.equal(r.summary.account.check, "not shown");
-  assert.ok(d.io.lines.includes("account label (not verified): label-from-a-person"));
+  assert.ok(d.io.lines.includes("account label (not verified): label-from-the-operator"));
   assert.ok(!d.io.lines.join("\n").includes("acct-test"));
   assert.ok(!c.summary().account.note.includes("acct-test"));
 });
@@ -1293,9 +1293,9 @@ test("print mode. print-mode flags refuse with exit 2 and nothing starts", async
   }
 });
 
-// ---------------------------------------------------------------- no-browser block
+// ---------------------------------------------------------------- web and browser tool restrictions
 
-test("no-browser. settings must exist and carry the deny rules; browser libraries, env and arguments refuse", async () => {
+test("web-tools. settings must exist and carry the deny rules; browser libraries, env and arguments refuse", async () => {
   for (const settings of [{ permissions: { deny: ["WebFetch"] } }, "not json", {}]) {
     const b = box({ settings });
     const { r, client } = await run(b, b.argv("T2"), [T2_OK()]);
@@ -1312,7 +1312,7 @@ test("no-browser. settings must exist and carry the deny rules; browser librarie
   assert.equal((await run(c, c.argv("T2"), [T2_OK()], {}, liveEnv({ PLAYWRIGHT_BROWSERS_PATH: "x" }))).r.exitCode, 2);
 });
 
-test("no-browser. options disallow web tools; init tools and every tool_use are scanned", async () => {
+test("web-tools. options disallow web tools; init tools and every tool_use are scanned", async () => {
   const b = box();
   const { client } = await run(b, b.argv("T2"), [T2_OK()]);
   for (const t of ["WebFetch", "WebSearch", "Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"]) assert.ok(client.calls[0].options.disallowedTools.includes(t), t);
@@ -1327,7 +1327,7 @@ test("no-browser. options disallow web tools; init tools and every tool_use are 
   assert.deepEqual(inInit.client.prompts, []);
 });
 
-test("no-browser. override is time-boxed (240 min), lifts only what it names, never the library check, and is reported", async () => {
+test("web-tools. override is time-boxed (240 min), lifts only what it names, never the library check, and is reported", async () => {
   const now = Date.parse("2026-11-05T00:00:00Z");
   const ok = (o) => JSON.stringify({ reason: "r", expires: new Date(now + 60 * 60000).toISOString(), lifts: ["init_scan"], ...o });
   assert.deepEqual(loadOverride(ok(), now).lifts, ["init_scan"]);

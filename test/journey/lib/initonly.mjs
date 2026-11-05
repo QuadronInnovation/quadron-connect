@@ -4,7 +4,7 @@
 //
 // It reports exactly one stdout line AUTH_SOURCE=<value>, from Query.initializationResult()
 // (sdk.d.ts:3060-3067), whose account.apiKeySource is an open string (:28). Whether that resolves
-// with no prompt is not shown; the owner's check measures it.
+// with no prompt is not shown; check by hand.
 //
 // Every gate applies. --expect-no-key replaces the "exactly ANTHROPIC_API_KEY" check only: that
 // check exists to read whatever source a session with no key reports, so the value is printed.

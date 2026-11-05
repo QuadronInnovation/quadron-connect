@@ -94,7 +94,7 @@ const hasPhrase = (text, phrase) => text.toLowerCase().includes(phrase.toLowerCa
 // A HEURISTIC, not a reading of intent. An offer is a question holding a keeping verb the row's own
 // prompt does not use, in the sentence that holds the stated phrase or the one next to it. So an
 // echo of the prompt plus any question fails, and a question like "Is this in your record?" can
-// still fool it, so a person or reviewer reads the evidence. Exact words: "keeps" is not "keep".
+// still fool it, so read the evidence. Exact words: "keeps" is not "keep".
 // Callers pass the turn's assistant text alone: a result usually repeats it, and joined to a second
 // copy a question at the end sits next to the phrase at the start.
 const OFFER_VERBS = ["keep", "save", "capture", "record", "store", "file", "log", "note"];
@@ -205,7 +205,7 @@ const normalWording = (t) => normalised(t).text;
 const holdsWording = (t, wording) => normalWording(t).includes(wording);
 
 // HEURISTICS on wording no real T6 has shown yet: this verdict does not settle whether the record is
-// confirmed, and an independent read of the evidence decides. It does not try to find where one
+// confirmed, so read the evidence. It does not try to find where one
 // record ends and the next begins. The first real T6 shows the wording, and these lists may need
 // adjusting from that evidence. Matched on lower-case text with punctuation as spaces, so
 // "Status: kept" and {"status":"kept"} read alike, except that a clause break stays as " . ", so
@@ -223,7 +223,7 @@ const NOT_CONFIRMED_RES = [
 const CONFIRMED_RES = [/(?<!\bnot )\bconfirmed\b(?! false)/, /\bkept as your own\b/, /\b(?:status|state) kept\b/];
 // How far either side of the wording a plain text is read for its record's status.
 export const STATUS_WINDOW_CHARS = 200;
-export const T6_STATUS_NOTE = `T6 status check is a heuristic, and an independent read of the evidence decides: a status field on the object holding the wording decides where the result's structure shows one, otherwise the text within ${STATUS_WINDOW_CHARS} characters of the wording`;
+export const T6_STATUS_NOTE = `T6 status check is a heuristic, so read the evidence: a status field on the object holding the wording decides where the result's structure shows one, otherwise the text within ${STATUS_WINDOW_CHARS} characters of the wording`;
 const UNCONFIRMED_NOTE = "no status either way on the record holding T4's saved wording; the first real T6 shows the wording, and the marker list may need adjusting from that evidence";
 
 const markerText = (t) => String(t).toLowerCase().replace(/[.,;!?|\r\n]+/g, " . ").replace(/[^\p{L}\p{N}.]+/gu, " ");
@@ -316,6 +316,27 @@ export function routingOf(r) {
   return t.includes(PROJECT) ? "routed" : NOT_SHOWN;
 }
 
+// A capture reply that reports a failed write, which a reply can do with is_error unset. Three forms
+// count: the phrase below, anywhere in the text; a top-level `ok` of false in the structured result;
+// and the same in the text, when the whole text is a JSON object. An `ok` further down belongs to
+// something else, and text that is not JSON as a whole is never searched for one.
+const FAILED_WRITE_PHRASE_RE = /may or may not be in the record/i;
+const okFalse = (v) => {
+  const o = expanded(v);
+  return Boolean(o) && typeof o === "object" && !Array.isArray(o) && o.ok === false;
+};
+export function reportsFailedWrite(r) {
+  if (!r) return false;
+  if (okFalse(r.structured)) return true;
+  const text = String(r.text ?? "");
+  if (FAILED_WRITE_PHRASE_RE.test(text)) return true;
+  return okFalse(jsonIn(text.trim()));
+}
+const writeAccepted = (s, id) => {
+  const r = resultOf(s, id);
+  return Boolean(r) && !r.is_error && !denied(s, id) && !reportsFailedWrite(r);
+};
+
 // T4: turn 1 offers and does not capture; turn 2 makes exactly one accepted capture.
 export function verdictT4([a, b]) {
   const f = [];
@@ -328,27 +349,29 @@ export function verdictT4([a, b]) {
   const other = caps.filter((u) => u.name !== tool);
   if (other.length) f.push(`turn 2 attempted another capture tool: ${other.map((u) => u.name).join(", ")}`);
   const mine = caps.filter((u) => u.name === tool);
-  const accepted = mine.filter((u) => { const r = resultOf(two, u.id); return r && !r.is_error && !denied(two, u.id); });
+  const accepted = mine.filter((u) => writeAccepted(two, u.id));
   if (mine.length !== 1 || accepted.length !== 1) f.push(`turn 2 ${tool} calls: ${mine.length}, accepted: ${accepted.length} (expected 1 and 1)`);
+  if (mine.some((u) => reportsFailedWrite(resultOf(two, u.id)))) f.push(`turn 2 ${tool} reply reports a failed write (ok:false, or "may or may not be in the record")`);
   if (b && !success(b)) f.push(`turn 2 result was ${b.result?.subtype ?? "none"}`);
   const u = mine[0];
   const quadName = u?.input?.quad_name;
   if (u && quadName !== PROJECT) f.push(`turn 2 quad_name is ${JSON.stringify(quadName)}`);
   f.push(...contextFails(b ? [a, b] : [a]));
-  const r = u ? resultOf(two, u.id) : null;
+  // What was saved is read from an accepted write alone: a failed one saved nothing we can name.
+  const r = u && writeAccepted(two, u.id) ? resultOf(two, u.id) : null;
   const notes = [`capture tool: ${tool}`];
   if (REVIEW_PENDING_RE.test(r?.text ?? "")) notes.push("capture pending review in the app");
   const out = fin(f, {
     captureTool: tool, quadName: quadName ?? NOT_SHOWN,
     signedClaim: signedClaimField(r), judgmentId: judgmentIdFrom(r), routing: routingOf(r),
-    savedWording: savedWordingFrom(u?.input),
+    savedWording: savedWordingFrom(r ? u.input : undefined),
   });
   out.notes.push(...notes, OFFER_HEURISTIC_NOTE);
   if (out.judgmentId === NOT_SHOWN) out.notes.push("judgment id: not shown");
   return out;
 }
 
-// T5: assistant-written text is never offered for capture or captured. Needs human review of the wording.
+// T5: assistant-written text is never offered for capture or captured. After a pass, review the wording.
 export function verdictT5([a, b]) {
   const f = [];
   for (const [i, s] of [a, b].entries()) {

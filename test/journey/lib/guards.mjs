@@ -1,9 +1,8 @@
-// Guards: refusals, the child-environment allowlist, the no-browser block, config-directory
-// rules and the post-run hygiene check. Pure functions over injected env and fs, so every
-// rule is tested with stubs. Nothing here spawns a process or reads a credential file.
+// Guards: refusals, the child-environment allowlist, the web and browser tool restrictions,
+// config-directory rules and the post-run hygiene check. Pure functions over injected env and fs,
+// so every rule is tested with stubs. Nothing here spawns a process or reads a credential file.
 //
-// This is a guard with detection, not a security boundary: agents run as the same OS user
-// as the person who owns the machine.
+// This is a guard with detection, not a security boundary: every process runs as the same OS user.
 
 import path from "node:path";
 
@@ -132,18 +131,18 @@ export function fastModeOn(init) {
 }
 export const fastModeStatedOff = (init) => init?.fast_mode_state === "off";
 
-// The settings file holds deny rules, and nothing that widens a session or changes its credential,
-// environment, mode or cache pricing. Bare keeps settings-file hooks from firing (sdk.d.ts:4338), but
+// The settings given with --settings may carry only deny rules: nothing that widens a session or
+// changes its credential, environment, mode or cache pricing. Bare keeps settings-file hooks from firing (sdk.d.ts:4338), but
 // that is not confirmable here, so hooks refuse too. An allow rule would widen a turn's allow-list.
 // Stated only by key: a value is never printed. No override lifts these.
 const SETTINGS_REFUSED = ["hooks", "apiKeyHelper", "env", "promptCacheTtl", "subagentPromptCacheTtl"];
 export function checkSettingsBare(settings) {
   const has = (o, k) => Boolean(o) && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k);
-  for (const k of SETTINGS_REFUSED) if (has(settings, k)) throw new Refusal(`settings file contains ${k}; refusing`);
+  for (const k of SETTINGS_REFUSED) if (has(settings, k)) throw new Refusal(`the settings file may carry only deny rules: it contains ${k}; refusing`);
   const permissions = has(settings, "permissions") ? settings.permissions : null;
-  if (has(permissions, "defaultMode")) throw new Refusal("settings file contains permissions.defaultMode; refusing");
+  if (has(permissions, "defaultMode")) throw new Refusal("the settings file may carry only deny rules: it contains permissions.defaultMode; refusing");
   const allow = has(permissions, "allow") ? permissions.allow : null;
-  if (allow !== null && !(Array.isArray(allow) && allow.length === 0)) throw new Refusal("settings file has permissions.allow rules; refusing");
+  if (allow !== null && !(Array.isArray(allow) && allow.length === 0)) throw new Refusal("the settings file may carry only deny rules: it has permissions.allow rules; refusing");
 }
 
 // Every session is bare and dontAsk. Refused at the one place a query starts, and before anything is
@@ -154,7 +153,7 @@ export function assertBareDontAsk(options) {
   }
 }
 
-// -------------------------------------------------------------- no-browser block (scope s2)
+// -------------------------------------------------------------- web and browser tool restrictions
 
 export const REQUIRED_DENY = ["WebFetch", "WebSearch", "Bash(*playwright*)"];
 export const BROWSER_PACKAGES = ["playwright", "playwright-core", "@playwright/test", "puppeteer", "selenium-webdriver", "cypress"];
@@ -173,7 +172,7 @@ export function checkSettingsDeny(settings, lifted = []) {
   if (lifted.includes("settings_deny")) return;
   const deny = settings?.permissions?.deny;
   const missing = REQUIRED_DENY.filter((r) => !Array.isArray(deny) || !deny.includes(r));
-  if (missing.length) throw new Refusal(`settings file lacks deny rules: ${missing.join(", ")}`);
+  if (missing.length) throw new Refusal(`the settings file lacks the required web and browser deny rules: ${missing.join(", ")}`);
 }
 
 // resolve(name) returns truthy when the module resolves from the runner's directory.

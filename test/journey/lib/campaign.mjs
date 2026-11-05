@@ -1,7 +1,6 @@
 // The campaign spend record: an append-only JSON-lines file that outlives any ledger. Its path,
-// workspace label and campaign id come only from the environment the launcher sets, never from a
-// flag, so an agent starting a run cannot choose a fresh one. The file must already exist; the
-// harness never creates it. An empty file is a total of zero. Dry never touches it, and neither
+// workspace label and campaign id come from the environment only, never from a flag, so a run's
+// command line cannot choose a fresh one. The file must already exist; the harness never creates it. An empty file is a total of zero. Dry never touches it, and neither
 // does the confirmation record.
 //
 // Line kinds, each with {workspace, campaign, at}:
@@ -28,7 +27,7 @@ const corrupt = (why) => new Refusal(`the campaign record is corrupt (${why})`);
 // or the file is missing, unreadable or corrupt.
 export function campaignFromEnv(env, repoRoot, fs) {
   const missing = CAMPAIGN_VARS.filter((v) => !env[v]);
-  if (missing.length) throw new Refusal(`a live run needs the launcher's campaign variables: ${missing.join(", ")}`);
+  if (missing.length) throw new Refusal(`a live run needs the campaign variables: ${missing.join(", ")}`);
   const [file, workspace, id] = CAMPAIGN_VARS.map((v) => env[v]);
   if (!path.isAbsolute(file)) throw new Refusal("QUADRON_CAMPAIGN_RECORD must be an absolute path");
   if (!LABEL_RE.test(workspace)) throw new Refusal("QUADRON_CAMPAIGN_WORKSPACE has characters outside the allowed pattern");
