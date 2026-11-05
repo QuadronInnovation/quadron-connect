@@ -6,6 +6,6 @@
   "type": "commonjs",
   "engines": { "node": ">=18" },
   "files": ["bin", "lib", "hooks", "README.md"],
-  "scripts": { "test": "node test/run.mjs && node test/auth-scope.mjs" },
+  "scripts": { "test": "node test/run.mjs && node test/auth-scope.mjs && node test/client-config.mjs" },
   "license": "UNLICENSED"
 }
