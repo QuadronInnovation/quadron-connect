@@ -8,6 +8,13 @@
 // connector turn must name ToolSearch for them to be reachable. ToolSearch itself needs no permission.
 //
 // The session's built-in set comes from the same list: see turnTools below.
+//
+// Row flags, all optional. `offerPhrase`: the phrase an offer row's offer must stand at. `skillNames`:
+// the printed verdict line ends with the Skill names. `noPlugin`: the options name no plugin and no skill,
+// the plugin in init is a load stop, and Skill in init is only noted. `diagnostic`: the verdict is
+// DIAGNOSTIC, so the row can neither pass nor fail the product, and it adds nothing to the findings.
+// `repeatAfterPass`: a no-write row read on two runs, so a pass does not refuse its second Opus attempt
+// at that head. No flag or override reaches it, and a third attempt still refuses.
 
 const q = (t) => `mcp__quadron__${t}`;
 export const CAPTURE_PLACEHOLDER = "<captureTool>";
@@ -21,11 +28,15 @@ export const T3_CHECK = "test/journey/test/t3-hook.test.mjs";
 // offers to keep, not only name the project. Echoing one is not enough: see isOffer in verdicts.mjs.
 export const T4_OFFER_PHRASE = "recall only";
 export const ISSUE2_OFFER_PHRASE = "raw streams";
+export const NEUTRAL_OFFER_PHRASE = "annual pricing";
+
+const T4_DECISION_PROMPT = "Decision: the Claude Code plugin ships recall only; capture happens through the capture tool with my approval, never from a hook. Project: quadron-connect.";
 
 export const ROWS = {
   T2: {
     connector: false,
     cwd: "empty",
+    skillNames: true,
     turns: [{
       maxTurns: 7,
       tools: ["Skill", "ToolSearch"],
@@ -43,7 +54,7 @@ export const ROWS = {
       {
         maxTurns: 5,
         tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
-        prompt: "Decision: the Claude Code plugin ships recall only; capture happens through the capture tool with my approval, never from a hook. Project: quadron-connect.",
+        prompt: T4_DECISION_PROMPT,
       },
       {
         maxTurns: 5,
@@ -81,6 +92,46 @@ export const ROWS = {
       maxTurns: 6,
       tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
       prompt: "Note for the quadron-connect project: the journey runner keeps raw streams for every row.",
+    }],
+  },
+  // T4's first turn on its own, so nothing can be written. The capture tool is visible and dontAsk denies it.
+  "T4O-S": {
+    connector: true,
+    cwd: "empty",
+    skillNames: true,
+    repeatAfterPass: true,
+    offerPhrase: T4_OFFER_PHRASE,
+    turns: [{
+      maxTurns: 5,
+      tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+      prompt: T4_DECISION_PROMPT,
+    }],
+  },
+  // The same check on a decision whose words do not talk about capture.
+  "T4O-N": {
+    connector: true,
+    cwd: "empty",
+    skillNames: true,
+    repeatAfterPass: true,
+    offerPhrase: NEUTRAL_OFFER_PHRASE,
+    turns: [{
+      maxTurns: 5,
+      tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+      prompt: "Decision: we're going with annual pricing only, and monthly is ruled out. Project: quadron-connect.",
+    }],
+  },
+  // What the server's own text does with no plugin and no skill. An offer is not required on this
+  // surface, so this row reports what happened and cannot pass or fail.
+  "T4O-C": {
+    connector: true,
+    cwd: "empty",
+    noPlugin: true,
+    diagnostic: true,
+    offerPhrase: T4_OFFER_PHRASE,
+    turns: [{
+      maxTurns: 5,
+      tools: ["ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+      prompt: T4_DECISION_PROMPT,
     }],
   },
 };

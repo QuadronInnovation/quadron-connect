@@ -338,7 +338,13 @@ async function rowAttempt(ctx, def) {
   const callEntries = [];
   const tracker = new SpendTracker();
   const stop = (why, code) => { summary.partial = true; summary.stoppedBecause = why; exitCode = code; };
-  const failRow = (why) => { summary.verdict = "FAIL"; summary.notes.push(why); exitCode = EXIT.ROWS_FAILED; };
+  // A diagnostic row never reads FAIL: a guard tripping on one is a stop, with no result to report.
+  const failRow = (why) => {
+    summary.notes.push(why);
+    if (def.diagnostic) { stop(why, EXIT.STOPPED); return; }
+    summary.verdict = "FAIL";
+    exitCode = EXIT.ROWS_FAILED;
+  };
 
   // One wall-clock limit for all of this row's turns.
   let rowTimer;
@@ -350,7 +356,7 @@ async function rowAttempt(ctx, def) {
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
         resume: i > 0 ? sessionId : undefined, settingsPath: f.settings, pluginDir: f["plugin-dir"],
-        mcpServers, childEnv, cwd,
+        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin),
       });
 
       let can, entry;
@@ -409,7 +415,8 @@ async function rowAttempt(ctx, def) {
 
       // Read before any stop is acted on, so a stop cannot hide them.
       const sig = scanSignals(s, String(call.error?.message ?? ""));
-      if (sig.ownerUnavailable) findings.add({ kind: "capture_owner_unavailable", row, model: f.model, head, detail: "seen in a tool output or result" });
+      if (sig.ownerUnavailable && def.diagnostic) summary.notes.push("capture_owner_unavailable seen in a tool output or result");
+      else if (sig.ownerUnavailable) findings.add({ kind: "capture_owner_unavailable", row, model: f.model, head, detail: "seen in a tool output or result" });
       if (sig.auth401 || call.gate?.auth) { authFailed = true; break; }
 
       if (!settled) { stop("the campaign record could not be written after the call; its reservation stands", EXIT.STOPPED); break; }
@@ -470,7 +477,8 @@ async function rowAttempt(ctx, def) {
     const v = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording });
     summary.verdict = v.verdict;
     summary.notes.push(...(v.notes ?? []));
-    for (const k of ["judgmentId", "savedWording", "signedClaim", "routing", "quadName", "citesProject"]) if (v[k] !== undefined) summary[k] = v[k];
+    for (const k of ["judgmentId", "savedWording", "signedClaim", "routing", "quadName", "citesProject", "offerSentence"]) if (v[k] !== undefined) summary[k] = v[k];
+    // DIAGNOSTIC is neither of these, so it leaves the exit code where the row got it.
     if (v.verdict === "FAIL" || v.verdict === "WITHHELD" || v.verdict === "UNCONFIRMED") exitCode = EXIT.ROWS_FAILED;
     if (v.verdict === "BLOCKED-BY-BACKEND") exitCode = EXIT.BLOCKED;
   }
@@ -488,6 +496,7 @@ async function rowAttempt(ctx, def) {
   for (const name of MCP_RESOURCE_TOOLS) {
     if (summary.toolCalls.some((c) => c.name === name)) summary.notes.push(`${name} was called: it needs no permission, so no allow-list covers it`);
   }
+  if (def.noPlugin && initToolsSeen.has("Skill")) summary.notes.push("Skill listed in init");
   const hookLabels = [...new Set(summary.turns.flatMap((t) => t.messageOrder ?? []).filter((l) => /(^|:)hook_/.test(l)))];
   if (hookLabels.length) summary.notes.push(`hook events came before init (${hookLabels.join(", ")}); plugin hooks are not checked`);
   const initMsg = streams.find((s) => s.init)?.init;
@@ -520,6 +529,8 @@ async function rowAttempt(ctx, def) {
   // ---- findings, evidence and the ledger's row record
   if (!authFailed && !summary.partial && !summary.cutOff) haikuFailureFinding({ row, model: f.model, head, verdict: summary.verdict, ledger, log: findings });
   summary.findings = findings.items;
+  // From the streams, so a stop that reaches no verdict has them too. Names only: see skillLabel.
+  if (def.skillNames) summary.skillNames = streams.flatMap((s) => s.tool_uses.filter((u) => u.name === "Skill").map((u) => skillLabel(u.input, red)));
   try {
     const state = readRecord(campaign, fs);
     summary.spend = { campaignTotalUsd: recordTotal(state), campaignModelUsd: recordModelTotal(state, f.model), totalCeilingUsd: budget.totalUsd };
@@ -552,12 +563,9 @@ async function rowAttempt(ctx, def) {
   appendEntry(f.ledger, fs, ledger, rowEntry);
 
   const verdictLine = `${row}: ${safe.verdict}${summary.partial ? ` (partial: ${safe.stoppedBecause})` : ""}; call spend ${summary.totalCostUsd.toFixed(4)} USD`;
-  if (row === "T2") {
-    // From the streams, so a stop that reaches no verdict prints them too. Names only: see skillLabel.
-    const names = streams.flatMap((s) => s.tool_uses.filter((u) => u.name === "Skill").map((u) => skillLabel(u.input, red)));
-    // The labels are already redacted. This is for the stop reason, which `safe` holds at the evidence level, with paths and URLs.
-    io.out(red.text(`${verdictLine}; Skill names [${names.join(", ")}]`));
-  } else io.out(verdictLine);
+  // The labels are already redacted. This is for the stop reason, which `safe` holds at the evidence level, with paths and URLs.
+  if (def.skillNames) io.out(red.text(`${verdictLine}; Skill names [${summary.skillNames.join(", ")}]`));
+  else io.out(verdictLine);
   if (account.note) io.out(red.text(account.note));
   return { exitCode, summary: safe, evidenceDir: evidence.dir };
 }

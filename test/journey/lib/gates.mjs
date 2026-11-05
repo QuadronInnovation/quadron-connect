@@ -106,7 +106,10 @@ function checkTurnTools(listed, def, lifts) {
 // `tools` option; with none stated, every built-in name in init counts as unexpected.
 export function checkSession(ev, def, lifts = []) {
   if ((ev.pluginErrors ?? 0) > 0) return stopGate(EXIT.STOPPED, `plugin_errors is not empty (from ${ev.source})`);
-  if (!ev.plugins?.some((p) => p.name === PLUGIN_NAME)) return stopGate(EXIT.STOPPED, "plugin not loaded");
+  // A row with `noPlugin` asked for a session without it, and one holding it is not the one asked for.
+  const loaded = Boolean(ev.plugins?.some((p) => p.name === PLUGIN_NAME));
+  if (!loaded && !def.noPlugin) return stopGate(EXIT.STOPPED, "plugin not loaded");
+  if (loaded && def.noPlugin) return stopGate(EXIT.STOPPED, "plugin loaded on a row that runs without it");
   if (def.model && ev.source === "init message" && ev.model !== def.model) return stopGate(EXIT.STOPPED, "init reports a different model than the one requested");
   if (def.connector) {
     const failed = checkConnectorStatus(ev.mcpServers?.find((m) => m.name === SERVER_NAME)?.status);

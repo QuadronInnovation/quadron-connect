@@ -92,37 +92,54 @@ const contextFails = (streams) => {
 const hasPhrase = (text, phrase) => text.toLowerCase().includes(phrase.toLowerCase());
 
 // A HEURISTIC, not a reading of intent. An offer is a question holding a keeping verb the row's own
-// prompt does not use, in the sentence that holds the stated phrase or the one next to it. So an
+// prompt does not use, in the sentence that holds the stated phrase or the one before or after it. So an
 // echo of the prompt plus any question fails, and a question like "Is this in your record?" can
 // still fool it, so read the evidence. Exact words: "keeps" is not "keep".
 // Callers pass the turn's assistant text alone: a result usually repeats it, and joined to a second
 // copy a question at the end sits next to the phrase at the start.
 const OFFER_VERBS = ["keep", "save", "capture", "record", "store", "file", "log", "note"];
-export const OFFER_HEURISTIC_NOTE = "offer check is a heuristic (a question with a keeping verb not in the row's prompt, at the stated phrase or next to it): read the evidence";
+export const OFFER_HEURISTIC_NOTE = "offer check is a heuristic (a question with a keeping verb not in the row's prompt, at the stated phrase or in the sentence before or after it): read the evidence";
 const hasWord = (text, word) => new RegExp(`\\b${word}\\b`, "i").test(text);
 // Sentences, with a quoted passage kept whole: it may hold full stops of its own.
 const sentencesOf = (text) => String(text ?? "")
   .replace(/["“][^"”]*["”]/g, (q) => q.replace(/[.!?](?=\s)/g, ","))
   .split(/(?<=[.!?])\s+|\n+/).map((t) => t.trim()).filter(Boolean);
-export function isOffer(text, phrase, prompt = "") {
+function offerPlaces(text, phrase, prompt) {
   const verbs = OFFER_VERBS.filter((v) => !hasWord(prompt, v));
   const asks = (t) => t.includes("?") && verbs.some((v) => hasWord(t, v));
   const sentences = sentencesOf(text);
-  return sentences.some((t, i) => asks(t) && [i - 1, i, i + 1].some((n) => n >= 0 && n < sentences.length && hasPhrase(sentences[n], phrase)));
+  const near = (i, want) => [i - 1, i, i + 1].some((n) => n >= 0 && n < sentences.length && hasPhrase(sentences[n], want));
+  return { sentences, near, places: sentences.flatMap((t, i) => (asks(t) && near(i, phrase) ? [i] : [])) };
 }
+export const isOffer = (text, phrase, prompt = "") => offerPlaces(text, phrase, prompt).places.length > 0;
 
-// May the next turn of a two-turn row start? Nothing further is spent unless this says so.
+// An offer also names its project, in the offer's sentence or the one before or after it, the same
+// reach as the phrase. `sentence` is the offer that does, or else the first offer, with quoted full stops as
+// commas: see sentencesOf. A hand read of the exact wording belongs in the stream.
+export function readOffer(text, phrase, prompt = "") {
+  const { sentences, near, places } = offerPlaces(text, phrase, prompt);
+  const named = places.find((i) => near(i, PROJECT));
+  return { offered: places.length > 0, named: named !== undefined, sentence: sentences[named ?? places[0]] ?? null };
+}
+const NOT_NAMED = `does not name the project ("${PROJECT}") in its sentence or the one before or after it`;
+const t4Offer = (s) => readOffer(s.assistant_text, T4_OFFER_PHRASE, ROWS.T4.turns[0].prompt);
+
+// May the next turn of a two-turn row start? Nothing further is spent unless this says so. T4's offer
+// names the project as the one-turn offer rows' must: in its sentence or the one before or after it.
 export function turnGate(row, s) {
   if (!success(s)) return `turn 1 had no success result (${s?.result?.subtype ?? "none"})`;
   if (row !== "T4") return null;
   if (captureAttempted(s)) return "captured before confirmation";
-  if (!isOffer(s.assistant_text, T4_OFFER_PHRASE, ROWS.T4.turns[0].prompt)) return `turn 1 made no offer with the stated decision ("${T4_OFFER_PHRASE}")`;
+  const offer = t4Offer(s);
+  if (!offer.offered) return `turn 1 made no offer with the stated decision ("${T4_OFFER_PHRASE}")`;
+  if (!offer.named) return `turn 1's offer ${NOT_NAMED}`;
   return null;
 }
 
 // The observed shape is {"skill","args"} from a tool_use in a Claude Code transcript, not from docs, so `name` is
 // read when `skill` holds no name. One field names the skill: `skill` when it is a non-empty string, otherwise `name`,
 // never both, so the verdict and the label read the same value. `args` or a nested field is never a skill name.
+// Every row that prints or records Skill names reads them through skillLabel below, so the same field holds there.
 // The printed line carries names only, because redaction cannot be shape-proof on a whole input.
 const T2_SKILL = "quadron:quadron";
 const isName = (v) => typeof v === "string" && v !== "";
@@ -465,4 +482,40 @@ export function verdictIssue2([a]) {
   return out;
 }
 
-export const VERDICTS = { T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2 };
+// What an offer row's one turn shows. `fault` says why it holds no offer naming the project, or is null.
+function offerFacts(a, row) {
+  const { offerPhrase, turns } = ROWS[row];
+  const offer = readOffer(a.assistant_text, offerPhrase, turns[0].prompt);
+  const fault = !offer.offered ? `no offer with the stated phrase ("${offerPhrase}")` : offer.named ? null : `the offer ${NOT_NAMED}`;
+  return { fault, captured: captureAttempted(a), kept: offer.sentence ? { offerSentence: offer.sentence } : {} };
+}
+
+// T4's first turn alone: an offer naming the project, and nothing written. Whether the skill was
+// called is a record, not a condition: the check is about the offer, not how it came about.
+export const verdictOfferRow = (row) => ([a]) => {
+  const { fault, captured, kept } = offerFacts(a, row);
+  const f = [];
+  if (!success(a)) f.push(`result was ${a.result?.subtype ?? "none"}`);
+  if (captured) f.push("a capture tool was called (no write allowed)");
+  if (fault) f.push(fault);
+  f.push(...contextFails([a]));
+  const out = fin(f, kept);
+  out.notes.push(`Skill called: ${called(a, /^Skill$/) ? "yes" : "no"}`, OFFER_HEURISTIC_NOTE);
+  return out;
+};
+
+// Never a pass and never a product failure, whichever way the turn went.
+export const DIAGNOSTIC = "DIAGNOSTIC";
+export const verdictDiagnosticOffer = (row) => ([a]) => {
+  const { fault, captured, kept } = offerFacts(a, row);
+  const reason = captured ? "a capture tool was called" : fault;
+  const notes = [`offered first: ${reason ? `no (${reason})` : "yes"}`, `capture attempted: ${captured ? "yes" : "no"}`];
+  if (!success(a)) notes.push(`result was ${a.result?.subtype ?? "none"}`);
+  notes.push(...contextFails([a]), OFFER_HEURISTIC_NOTE);
+  return { verdict: DIAGNOSTIC, notes, ...kept };
+};
+
+export const VERDICTS = {
+  T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
+  "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
+};

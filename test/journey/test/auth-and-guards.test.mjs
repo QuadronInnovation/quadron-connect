@@ -12,7 +12,7 @@ import { initOnly } from "../lib/initonly.mjs";
 import { runGatedCall } from "../lib/call.mjs";
 import {
   box, fakeClient, liveEnv, init, initForm, authOutput, result, toolUse, toolResult, assistantText, T2_OK, T2_BAD, T4_OK, T5_OK, T6_OK, ISSUE2_OK, fetchStub, goodSettings, KEY, REFRESH, HEAD, HAIKU, MCP_URL, READ, SKILL, SOME_HOME, CAPTURE,
-  WORST_OPUS, WORST_HAIKU, spent, rowEntry, t6Ready, denial, permissionDenied,
+  WORST_OPUS, WORST_HAIKU, spent, rowEntry, t6Ready, denial, permissionDenied, OFFER_ROW,
 } from "./helpers.mjs";
 
 const run = (b, argv, scripts, over = {}, env = liveEnv()) => {
@@ -870,6 +870,9 @@ const TOOLS_TABLE = {
   T5: [["Skill", "ToolSearch", "Read", "Glob", "Grep"], ["Skill", "ToolSearch", "Read", "Glob", "Grep"]],
   T6: [["Skill", "ToolSearch"]],
   ISSUE2: [["Skill", "ToolSearch"]],
+  "T4O-S": [["Skill", "ToolSearch"]],
+  "T4O-N": [["Skill", "ToolSearch"]],
+  "T4O-C": [["ToolSearch"]],
 };
 const ALLOWED_TABLE = {
   T2: [["Skill", "ToolSearch"]],
@@ -877,9 +880,15 @@ const ALLOWED_TABLE = {
   T5: [["Skill", "ToolSearch"], ["Skill", "ToolSearch"]],
   T6: [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read")]],
   ISSUE2: [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")]],
+  "T4O-S": [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")]],
+  "T4O-N": [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")]],
+  "T4O-C": [["ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")]],
 };
 const rowBox = (row) => box(row === "T6" ? { entries: t6Ready() } : {});
-const ROW_SCRIPTS = { T2: () => [T2_OK()], T4: () => T4_OK(), T5: () => T5_OK(), T6: () => [T6_OK()], ISSUE2: () => [ISSUE2_OK()] };
+const ROW_SCRIPTS = {
+  T2: () => [T2_OK()], T4: () => T4_OK(), T5: () => T5_OK(), T6: () => [T6_OK()], ISSUE2: () => [ISSUE2_OK()],
+  "T4O-S": () => [OFFER_ROW("T4O-S")], "T4O-N": () => [OFFER_ROW("T4O-N")], "T4O-C": () => [OFFER_ROW("T4O-C")],
+};
 
 test("tools. every row's turns state the fixed `tools` and `allowedTools`; connector names and the capture tool stay out of `tools`; the init forms state none", async () => {
   for (const [row, expected] of Object.entries(TOOLS_TABLE)) {

@@ -55,23 +55,26 @@ export function inScope(toolName, input, { root, fs }) {
 
 export function buildOptions({
   model, effort, sessionUsd, maxTurns, tools, allowedTools, resume, settingsPath, pluginDir,
-  mcpServers, childEnv, cwd,
+  mcpServers, childEnv, cwd, noPlugin = false,
 }) {
   const o = {
     settings: settingsPath, // flag-settings layer (sdk.d.ts:2271-2289), holds the web and browser deny rules
     settingSources: [], // nothing from user, project or local files; the settings given with --settings are the only layer from files this run controls
     env: childEnv,
-    plugins: [{ type: "local", path: pluginDir }],
     strictMcpConfig: true,
     tools,
     allowedTools,
     disallowedTools: [...DISALLOWED_TOOLS],
     permissionMode: "dontAsk",
-    // plugin:skill form (sdk.d.ts:2340-2362). The rows also keep 'Skill' in `allowedTools`: passing it
-    // is deprecated but not removed, and the first T2 shows which of the two works.
-    skills: ["quadron:quadron"],
     systemPrompt: { type: "preset", preset: "claude_code" },
   };
+  // A connector-only row leaves both out: it measures the session without them.
+  if (!noPlugin) {
+    o.plugins = [{ type: "local", path: pluginDir }];
+    // plugin:skill form (sdk.d.ts:2340-2362). The rows also keep 'Skill' in `allowedTools`: passing it
+    // is deprecated but not removed, and the first T2 shows which of the two works.
+    o.skills = ["quadron:quadron"];
+  }
   if (model) o.model = model;
   if (effort) o.effort = effort;
   if (sessionUsd !== undefined) o.maxBudgetUsd = sessionUsd; // per call: a two-turn row can spend it on each turn, and each call reserves it first, against the run and total ceilings

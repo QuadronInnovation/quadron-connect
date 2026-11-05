@@ -465,18 +465,18 @@ test("F6. turnGate lets T5 through on any success, and T4 only with the phrase a
 
 test("D4. T4: an echo plus any question fails; a question with a keeping verb the prompt does not use passes, whichever sentence holds the phrase", () => {
   const passes = (text) => turnGate("T4", rec(init(), ...said(text))) === null;
-  assert.equal(passes("Decision noted: the Claude Code plugin ships recall only; capture happens through the tool. Anything else?"), false);
+  assert.equal(passes("Decision noted: the Claude Code plugin ships recall only in quadron-connect; capture happens through the tool. Anything else?"), false);
   assert.equal(passes("Want me to keep it in your quadron-connect record as: \"The plugin ships recall only; capture needs my approval\"?"), true);
-  assert.equal(passes("Want me to keep it as: \"The plugin ships recall only. Capture needs my approval.\"?"), true); // a quote stays one sentence
+  assert.equal(passes("Want me to keep it in quadron-connect as: \"The plugin ships recall only. Capture needs my approval.\"?"), true); // a quote stays one sentence
   assert.equal(passes("The plugin ships recall only.\n\nShould I save that to quadron-connect?"), true); // the next sentence
-  assert.equal(passes("Shall I record this? It ships recall only."), true);
+  assert.equal(passes("Shall I record this in quadron-connect? It ships recall only."), true);
   for (const fail of [
-    "Want me to capture that the plugin ships recall only?", // the prompt's own word no longer counts
-    "The plugin ships recall only. Then more. Want to keep going?", // two sentences away
-    "I can keep this: the plugin ships recall only.", // no question
-    "Does the plugin ship recall only?", // no keeping verb
-    "It keeps recall only as a rule?", // "keeps" is not "keep"
-  ]) assert.equal(passes(fail), false, fail);
+    "Want me to capture that the plugin ships recall only in quadron-connect?", // the prompt's own word no longer counts
+    "The plugin ships recall only. Then more. Want to keep going in quadron-connect?", // two sentences away
+    "I can keep this in quadron-connect: the plugin ships recall only.", // no question
+    "Does the plugin ship recall only in quadron-connect?", // no keeping verb
+    "It keeps recall only in quadron-connect as a rule?", // "keeps" is not "keep"
+  ]) assert.match(turnGate("T4", rec(init(), ...said(fail))), /made no offer/, fail);
 });
 
 test("D4. ISSUE2 shares the check: its prompt's own \"Note\" does not count", () => {
