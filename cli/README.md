@@ -92,6 +92,10 @@ Hooks **fail open** by design — a timeout, a non-zero exit, or a mistyped path
 
 If they do not appear within a few seconds of installing, restart the session to force a config reload.
 
+## Other clients
+
+For ChatGPT, Cursor and Codex, see [`docs/clients/`](../docs/clients/README.md). `quadron-connect config <cursor, codex or chatgpt>` prints the connection settings and writes nothing. Those recipes come from vendor docs and nobody has run them end to end.
+
 ## Requirements
 
 Node 18 or newer (for global `fetch`). No dependencies.
