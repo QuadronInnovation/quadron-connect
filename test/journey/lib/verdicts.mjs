@@ -120,18 +120,20 @@ export function turnGate(row, s) {
   return null;
 }
 
-// The observed shape is {"skill","args"} from a tool_use in a Claude Code transcript, not from docs, so the check does not depend on the key name.
+// The observed shape is {"skill","args"} from a tool_use in a Claude Code transcript, not from docs, so `name` is
+// read too. Only those two fields name the skill: the value in `args` or a nested field is never a skill name.
 // The printed line carries names only, because redaction cannot be shape-proof on a whole input.
 const T2_SKILL = "quadron:quadron";
-const holdsValue = (v, want) => v === want || (Boolean(v) && typeof v === "object" && Object.values(v).some((x) => holdsValue(x, want)));
-const namesT2Skill = (input) => Boolean(input) && typeof input === "object" && holdsValue(input, T2_SKILL);
-// One Skill call's name for the printed line. A model-influenced value is a label only: one line, nothing else in it.
-// Redacted first and reduced from that, never from the raw value: reducing or cutting first can hide a secret from
-// the patterns and the by-value mask. The angle brackets are kept for the masks redaction writes.
+const SKILL_NAME_KEYS = ["skill", "name"];
+const skillNames = (input) => (Boolean(input) && typeof input === "object"
+  ? SKILL_NAME_KEYS.map((k) => input[k]).filter((v) => typeof v === "string" && v) : []);
+const namesT2Skill = (input) => skillNames(input).includes(T2_SKILL);
+// One Skill call's name for the printed line, from the same two fields. A model-influenced value is a label only: one
+// line, nothing else in it. Redacted first and reduced from that, never from the raw value: reducing or cutting first
+// can hide a secret from the patterns and the by-value mask. The angle brackets are kept for the masks redaction writes.
 export function skillLabel(input, red) {
-  const named = input?.skill;
-  if (typeof named === "string" && named) return red.text(named).replace(/[^\w.:<>-]/g, "_").slice(0, 40);
-  return namesT2Skill(input) ? T2_SKILL : "no skill name";
+  const [named] = skillNames(input);
+  return named ? red.text(named).replace(/[^\w.:<>-]/g, "_").slice(0, 40) : "no skill name";
 }
 
 // T2: no connector, so no Quadron tool can be called and quad_context is zero by construction.
@@ -147,7 +149,7 @@ export function verdictT2([a]) {
   // Every Skill call is held to the name, denied or errored ones too.
   const skills = a.tool_uses.filter((u) => u.name === "Skill");
   const unnamed = skills.filter((u) => !namesT2Skill(u.input)).length;
-  if (unnamed) f.push(`${unnamed} of ${skills.length} Skill calls hold no value equal to ${T2_SKILL}`);
+  if (unnamed) f.push(`${unnamed} of ${skills.length} Skill calls do not name ${T2_SKILL} in input.skill or input.name`);
   return fin(f);
 }
 
