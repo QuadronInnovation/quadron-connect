@@ -1551,7 +1551,7 @@ test("T2 and Skill. a Skill call denied in either record, or errored, does not c
   assert.equal((await run(ok, ok.argv("T2"), [T2_OK()])).r.summary.verdict, "PASS");
   // One good call is enough, beside one that failed.
   const both = box();
-  assert.equal((await run(both, both.argv("T2"), skillThen(toolResult("skill1", "boom", true), toolUse("s2", "Skill", { skill: "quadron" }), toolResult("s2", "ok"), end()))).r.summary.verdict, "PASS");
+  assert.equal((await run(both, both.argv("T2"), skillThen(toolResult("skill1", "boom", true), toolUse("s2", "Skill", { skill: "quadron:quadron" }), toolResult("s2", "ok"), end()))).r.summary.verdict, "PASS");
 });
 
 test("T2 and Skill. options name the plugin's skill on rows and both init forms, and the rows keep 'Skill' on their allow-lists", async () => {

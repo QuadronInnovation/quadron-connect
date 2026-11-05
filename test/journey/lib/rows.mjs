@@ -4,8 +4,8 @@
 //
 // `tools` is a turn's whole allow-list under dontAsk. Capture tools are left out of it but never
 // disallowed on a no-write turn: the skill's offer depends on them being listed, and dontAsk denies
-// the call. Connector tools may be deferred, and nothing can approve ToolSearch later, so every
-// connector turn lists it.
+// the call. Connector tools may be deferred, and `tools` sets the session's built-in set, so every
+// connector turn must name ToolSearch for them to be reachable. ToolSearch itself needs no permission.
 //
 // The session's built-in set comes from the same list: see turnTools below.
 
@@ -93,6 +93,8 @@ export const turnTools = (def, turn) => [...new Set([
   ...turn.tools.filter((t) => t !== CAPTURE_PLACEHOLDER && !t.startsWith("mcp__")),
   ...(def.outsideCheck ?? []),
 ])];
+
+export const CAPTURE_TOOLS = [q("future_you_capture"), q("quad_commit")];
 
 export const pickCaptureTool = (tools) =>
   Array.isArray(tools) && tools.includes(q("future_you_capture")) ? q("future_you_capture") : q("quad_commit");
