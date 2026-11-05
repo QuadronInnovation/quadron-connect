@@ -5,7 +5,7 @@
   "bin": { "quadron-connect": "bin/cli.js" },
   "type": "commonjs",
   "engines": { "node": ">=18" },
-  "files": ["bin", "lib", "hooks", "README.md"],
+  "files": ["bin", "lib", "hooks", "README.md", "LICENSE"],
   "scripts": { "test": "node test/run.mjs && node test/auth-scope.mjs && node test/client-config.mjs" },
-  "license": "UNLICENSED"
+  "license": "SEE LICENSE IN LICENSE"
 }
