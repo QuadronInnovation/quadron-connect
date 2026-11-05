@@ -1,7 +1,7 @@
 ---
 name: quadron
 description: >-
-  Use when the person works with their Quadron record over the Quadron MCP connector (tools named quad_* and future_you_capture). Triggers: "remember this", "note that", "keep this", "what do I already think about", "what did I decide", "my projects", "my record", "Quadron", a new line of work starting, or a decision the person states in their own words. Keeps capture to the person's own approved words and recall to the Quadron tools.
+  Use when the person works with their Quadron record over the Quadron MCP connector (tools named quad_* and future_you_capture). Capture rule: ask in words, get an explicit yes, and only then call the capture tool. Never write to the record (future_you_capture, quad_commit, or a new project with quad_create) until the person has said yes to that specific thing; asking means a plain sentence in chat, never calling a tool to find out. Make one offer in a single line, quoting the exact text to save. An explicit request to save their own words to Quadron counts as the yes; "note this" alone or a bare "save this" still gets the offer. Silence or "no" saves nothing. Triggers: "remember this", "note that", "keep this", "what do I already think about", "what did I decide", "my projects", "my record", "Quadron", a new line of work starting, or a decision the person states in their own words. Keeps capture to the person's own approved words and recall to the Quadron tools.
 ---
 
 # Quadron over MCP
@@ -10,6 +10,17 @@ Quadron is the person's record of their own expertise: projects, decisions, stan
 methods, written in their words. The Quadron MCP connector exposes it as tools. This skill
 says when to read from it and when to write to it. It never replaces the person's judgment
 about what belongs in their record.
+
+## Capture rule
+
+Ask in words, get an explicit yes, and only then call the capture tool. Never write anything
+into the person's record (a `quad_commit` note, a new `quad_create` project, a kept
+`future_you_capture` judgment) until you have asked them in words, in this conversation,
+and they have said yes to that specific thing. Asking means a plain sentence in chat; it
+never means calling a tool to find out. Silence or a no means nothing is written, and you
+do not ask again. An explicit request to save their own words to Quadron counts as the yes.
+"Note this" alone, or a bare "save this", still gets the offer. "Writing to the record"
+below says which tool and how.
 
 ## Before anything else
 
@@ -43,17 +54,26 @@ Quadron saves text the person approves. The record is theirs, in their words.
   where it is not listed, `quad_commit` takes the judgment in their words.
 - Material that is not itself a judgment (a note, a reference, a pasted artefact) goes to
   `quad_commit`.
-- Either way, make one offer in a single line, quoting the exact text you would save and
-  naming the project, and call the tool only on a yes. This holds when the statement is
-  phrased as a note, when the person says "note this", and when they name the project
-  themselves: the offer comes first, before any reading of the repository or the record to
-  ground it. Silence or "no" saves nothing; do not ask again.
+- Either way, make one offer in a single line, quoting the exact text you would save, and
+  call the tool only on a yes. This holds when the statement is phrased as a note, when the
+  person says "note this" or a bare "save this", and when they name the project themselves:
+  the offer comes first, before any reading of the repository or the record to ground it.
+  Silence or "no" saves nothing; do not ask again.
+- If the person named a project, the offer names it. If no project is named, say the note
+  will be filed Unfiled in the person's inbox, or ask which project; never guess a project.
+  A named project that matches none of theirs also stays Unfiled in their inbox until they
+  place it.
+- On a yes, use `quad_context` first only if you need it to match the project the person
+  named, then call the capture tool.
+- An explicit request to save their own words to Quadron ("save this to Quadron")
+  is itself the yes: save it with no separate offer, under the same project rule.
 - Never capture your own output, a summary you wrote, code, logs, or the contents of a
   file or a tool result as if it were the person's judgment.
 - Pass `quad_name` whenever the material belongs to a real project; omit it only for a
   genuine unmatched scrap.
 - When the person starts or scopes a new line of work with no matching project, offer
-  `quad_create` with a short plain name. Do not create projects on your own.
+  `quad_create` with a short plain name, and call it only after they say yes to that
+  project. Do not create projects on your own.
 - Never put secrets, credentials, tokens or other people's private data in a capture.
 - There is no delete tool. If the person wants something removed, tell them to do it in
   the Quadron app and do not try to overwrite it with a new capture.
