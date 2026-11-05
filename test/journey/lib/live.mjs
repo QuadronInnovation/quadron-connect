@@ -13,9 +13,9 @@ import {
 import { appendLimit, appendReservation, appendSettlement, readRecord, recordModelTotal, recordTotal } from "./campaign.mjs";
 import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./connector.mjs";
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
-import { ROWS, CAPTURE_PLACEHOLDER, SERVER_NAME, T3_CHECK, pickCaptureTool, turnTools } from "./rows.mjs";
+import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, pickCaptureTool, turnTools } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
-import { VERDICTS, collect, connectorCalled, initStatuses, quadContextCalls, turnGate } from "./verdicts.mjs";
+import { VERDICTS, collect, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
 import { runGatedCall } from "./call.mjs";
 import { Evidence, newUniqueDir } from "./evidence.mjs";
@@ -447,6 +447,13 @@ async function rowAttempt(ctx, def) {
       if (i + 1 < def.turns.length) {
         const why = turnGate(row, s);
         if (why) { failRow(why); break; }
+        // A record only: the next turn needs a capture tool and turn 1's init lists neither, so it goes on with the fallback.
+        const listed = streams[0].init?.tools;
+        if (def.turns[i + 1].tools.includes(CAPTURE_PLACEHOLDER) && !(Array.isArray(listed) && CAPTURE_TOOLS.some((t) => listed.includes(t)))) {
+          const absent = red.text(`capture names absent at init: ${CAPTURE_TOOLS.join(", ")}; fallback quad_commit`);
+          summary.notes.push(absent);
+          io.out(absent);
+        }
       }
     }
   } finally {
@@ -544,7 +551,13 @@ async function rowAttempt(ctx, def) {
   if (row === "T6") rowEntry.judgmentId = judgmentId;
   appendEntry(f.ledger, fs, ledger, rowEntry);
 
-  io.out(`${row}: ${safe.verdict}${summary.partial ? ` (partial: ${safe.stoppedBecause})` : ""}; call spend ${summary.totalCostUsd.toFixed(4)} USD`);
+  const verdictLine = `${row}: ${safe.verdict}${summary.partial ? ` (partial: ${safe.stoppedBecause})` : ""}; call spend ${summary.totalCostUsd.toFixed(4)} USD`;
+  if (row === "T2") {
+    // From the streams, so a stop that reaches no verdict prints them too. Names only: see skillLabel.
+    const names = streams.flatMap((s) => s.tool_uses.filter((u) => u.name === "Skill").map((u) => skillLabel(u.input, red)));
+    // The labels are already redacted. This is for the stop reason, which `safe` holds at the evidence level, with paths and URLs.
+    io.out(red.text(`${verdictLine}; Skill names [${names.join(", ")}]`));
+  } else io.out(verdictLine);
   if (account.note) io.out(red.text(account.note));
   return { exitCode, summary: safe, evidenceDir: evidence.dir };
 }

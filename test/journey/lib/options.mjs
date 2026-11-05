@@ -1,3 +1,10 @@
+// Before a paid run:
+// (a) Check whether a managed settings file is on the host: managed policy loads whatever this run sets.
+// (b) Server-managed settings for the key's organization cannot be seen from the host, so record them
+//     as unknown. A pattern of denied calls points there first.
+// (c) The run ceiling must fit a two-turn row's turn 1 spend plus its turn 2 reservation, or the row
+//     stops after turn 1.
+//
 // Builds the SDK `options` object for one call. Pure; the SDK itself is imported only by sdk.mjs.
 // Option names, all in sdk.d.ts (0.3.316): model :2023, effort :1974 ('low'|'medium'|'high'|
 // 'xhigh'|'max'), maxBudgetUsd :1993, maxTurns :1988, settingSources :2339, env :1721,
@@ -52,7 +59,7 @@ export function buildOptions({
 }) {
   const o = {
     settings: settingsPath, // flag-settings layer (sdk.d.ts:2271-2289), holds the web and browser deny rules
-    settingSources: [], // nothing from user or project files; the settings given with --settings are the only layer
+    settingSources: [], // nothing from user, project or local files; the settings given with --settings are the only layer from files this run controls
     env: childEnv,
     plugins: [{ type: "local", path: pluginDir }],
     strictMcpConfig: true,
@@ -67,7 +74,7 @@ export function buildOptions({
   };
   if (model) o.model = model;
   if (effort) o.effort = effort;
-  if (sessionUsd !== undefined) o.maxBudgetUsd = sessionUsd; // the session ceiling, on every call including each turn of a two-turn row
+  if (sessionUsd !== undefined) o.maxBudgetUsd = sessionUsd; // per call: a two-turn row can spend it on each turn, and each call reserves it first, against the run and total ceilings
   if (maxTurns !== undefined) o.maxTurns = maxTurns;
   if (cwd) o.cwd = cwd;
   if (mcpServers) o.mcpServers = mcpServers;

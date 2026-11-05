@@ -218,7 +218,7 @@ export function fakeClient(scripts) {
   };
 }
 
-export const SKILL = () => toolUse("skill1", "Skill", { skill: "quadron" });
+export const SKILL = () => toolUse("skill1", "Skill", { skill: "quadron:quadron" });
 export const T2_OK = (cost = 0.1, sid = "s1") => [init({ session_id: sid, mcp_servers: [] }), SKILL(), result(cost, { session_id: sid, result: "I cannot reach your record." })];
 // A T2 attempt that fails its verdict: no skill call. A pass would block another attempt at this head.
 export const T2_BAD = (cost = 0.1, sid = "s1") => [init({ session_id: sid, mcp_servers: [] }), result(cost, { session_id: sid, result: "An answer." })];

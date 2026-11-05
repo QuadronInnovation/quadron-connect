@@ -141,9 +141,9 @@ export const fastModeStatedOff = (init) => init?.fast_mode_state === "off";
 
 // The settings given with --settings may carry only deny rules: nothing that widens a session or
 // changes its credential, environment, mode or cache pricing. So these are allowlists, and a key not
-// named here refuses. No user or project settings load, so this file is the one settings layer a hook
-// could come from, and it may not carry any. An allow rule would widen a turn's allow-list. Stated only
-// by key: a value is never printed.
+// named here refuses. No user, project or local settings load, so of the layers from files this run
+// controls this is the only one a hook could come from, and it may not carry any. An allow rule would
+// widen a turn's allow-list. Stated only by key: a value is never printed.
 //
 // No override reaches this: it takes the settings and nothing else. The `settings_deny` lift applies
 // only to checkSettingsDeny below, the check that the required web and browser deny rules are present.

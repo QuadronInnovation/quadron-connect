@@ -471,6 +471,123 @@ test("F6. T4: naming only the project on turn 1 is no offer; a capture call on t
   assert.equal(e.r.exitCode, 1);
 });
 
+const COMMIT = "mcp__quadron__quad_commit";
+const ABSENT = `capture names absent at init: ${CAPTURE}, ${COMMIT}; fallback quad_commit`;
+const offerTurn = (tools) => [init({ session_id: "s9", tools }), assistantText(OFFER), result(0.1, { session_id: "s9", result: OFFER })];
+const captureTurn = (tools, name) => [init({ session_id: "s9", tools }), toolUse("u1", name, { quad_name: "quadron-connect", decided: WORDING }), toolResult("u1", "Saved for your review"), result(0.15, { session_id: "s9", result: "Saved." })];
+
+test("capture names. neither listed at turn 1's init: the row goes on to turn 2 with quad_commit, and the line is in the notes and printed once", async () => {
+  const b = box();
+  const { r, client, d } = await run(b, b.argv("T4"), [offerTurn(["Skill", "ToolSearch"]), captureTurn(["Skill", "ToolSearch", COMMIT], COMMIT)]);
+  assert.equal(client.calls.length, 2);
+  assert.ok(client.calls[1].options.allowedTools.includes(COMMIT));
+  assert.ok(!client.calls[1].options.allowedTools.includes(CAPTURE));
+  assert.equal(r.summary.verdict, "PASS");
+  assert.equal(r.exitCode, 0);
+  assert.equal(r.summary.notes.filter((n) => n === ABSENT).length, 1);
+  assert.equal(d.io.lines.filter((l) => l === ABSENT).length, 1);
+});
+
+test("capture names. a name listed goes on with that name and no line, and a row whose next turn needs no capture tool has no line", async () => {
+  for (const name of [CAPTURE, COMMIT]) {
+    const b = box();
+    const { r, client, d } = await run(b, b.argv("T4"), [offerTurn(["Skill", "ToolSearch", name]), captureTurn(["Skill", "ToolSearch", name], name)]);
+    assert.equal(client.calls.length, 2, name);
+    assert.ok(client.calls[1].options.allowedTools.includes(name), name);
+    assert.equal(r.summary.verdict, "PASS", name);
+    assert.equal(r.exitCode, 0, name);
+    assert.ok(!r.summary.notes.includes(ABSENT), name);
+    assert.ok(!d.io.lines.includes(ABSENT), name);
+  }
+  const t5 = box();
+  const out = await run(t5, t5.argv("T5"), T5_OK().map(([i, ...more]) => [{ ...i, tools: ["Skill", "ToolSearch"] }, ...more]));
+  assert.equal(out.client.calls.length, 2);
+  assert.equal(out.r.exitCode, 0);
+  assert.ok(!out.d.io.lines.includes(ABSENT));
+});
+
+const t2Line = (out) => out.d.io.lines.find((l) => l.startsWith("T2: "));
+const t2Skills = (b, inputs, ...end) => run(b, b.argv("T2"), [[init({ mcp_servers: [] }), ...inputs.map((input, n) => toolUse(`s${n}`, "Skill", input)), ...end]]);
+
+test("T2 skill name. a partial stop and a failed row with no verdict still print the Skill names on the verdict line", async () => {
+  const input = { skill: "other:skill", args: "x" };
+  const partial = await t2Skills(box(), [input], result(0.1, { subtype: "error_max_budget_usd" }));
+  assert.equal(partial.r.exitCode, 3);
+  assert.equal(partial.r.summary.partial, true);
+  assert.ok(t2Line(partial).endsWith("; Skill names [other:skill]"), t2Line(partial));
+  const cut = await t2Skills(box(), [input], result(0.1, { result: "partial", stop_reason: "max_tokens" }));
+  assert.equal(cut.r.exitCode, 1);
+  assert.equal(cut.r.summary.verdict, "FAIL");
+  assert.equal(cut.r.summary.cutOff, true);
+  assert.ok(t2Line(cut).startsWith("T2: FAIL;"), t2Line(cut));
+  assert.ok(t2Line(cut).endsWith("; Skill names [other:skill]"), t2Line(cut));
+});
+
+test("T2 skill name. the printed line ends with one label per Skill call, on a pass and a fail, and the verdict rule stands", async () => {
+  const end = result(0.1, { result: "An answer." });
+  for (const [inputs, verdict, names] of [
+    [[{ skill: "quadron:quadron", args: "x" }], "PASS", "quadron:quadron"],
+    [[{ name: "quadron:quadron" }], "PASS", "quadron:quadron"],
+    [[{ skill: "other:skill", args: "quadron:quadron" }], "PASS", "other:skill"], // the rule looks at every value; the label at `skill`
+    [[{ skill: "quadron:quadron" }, { skill: "other:skill" }], "FAIL", "quadron:quadron, other:skill"],
+    [[{ skill: "quadron" }], "FAIL", "quadron"],
+    [[{ n: 1 }], "FAIL", "no skill name"],
+    [[], "FAIL", ""],
+  ]) {
+    const out = await t2Skills(box(), inputs, end);
+    assert.equal(out.r.summary.verdict, verdict, names);
+    assert.ok(t2Line(out).startsWith(`T2: ${verdict};`), t2Line(out));
+    assert.ok(t2Line(out).endsWith(`; Skill names [${names}]`), t2Line(out));
+  }
+  const masked = await t2Skills(box(), [{ skill: "sk-abcdefghijkl" }], end); // the whole line goes through redaction
+  assert.ok(t2Line(masked).endsWith("; Skill names [<redacted>]"), t2Line(masked));
+});
+
+test("T2 skill name. a secret under skill is masked before the label is reduced or cut: a long registered value and pattern-shaped ones", async () => {
+  const end = result(0.1, { result: "An answer." });
+  const LONG = "fakeregisteredvalue".repeat(4);
+  for (const [skill, label] of [[LONG, "<redacted>"], [`name ${LONG}`, "name_<redacted>"]]) {
+    const b = box();
+    const done = await run(b, b.argv("T2"), [[init({ mcp_servers: [] }), toolUse("s", "Skill", { skill }), end]], {}, liveEnv({ ANTHROPIC_API_KEY: LONG }));
+    const line = t2Line(done);
+    assert.ok(line.endsWith(`; Skill names [${label}]`), line);
+    for (let i = 0; i + 40 <= LONG.length; i++) assert.ok(!line.includes(LONG.slice(i, i + 40)), String(i));
+  }
+  for (const [skill, label, secret] of [
+    ["key sk-ant-fakevalue0123", "key_<redacted>", "sk-ant-fakevalue0123"],
+    ["Bearer fakevalue0123", "Bearer_<redacted>", "fakevalue0123"],
+  ]) {
+    const out = await t2Skills(box(), [{ skill }], end);
+    assert.ok(t2Line(out).endsWith(`; Skill names [${label}]`), t2Line(out));
+    assert.ok(!t2Line(out).includes(secret), secret);
+  }
+});
+
+test("T2 skill name. nothing but the names prints, whatever shape a secret takes in the input, and skillInputs is gone from the summary", async () => {
+  const GHP = `ghp_${"madeupvalue0".repeat(3)}`;
+  const SECRETS = ["made-up-string-1", "made-up-nested-2", "made-up-array-3", "made-up-args-4", "made-up-key-string-5", "made-up-key-array-6", "made-up-key-object-7", "made-up-password-8", "made-up-bare-token-9", GHP];
+  const inputsNaming = (skill) => [
+    { skill, note: SECRETS[0], nested: { deep: SECRETS[1], list: [SECRETS[2], { inner: SECRETS[2] }] }, args: SECRETS[3], api_key: SECRETS[4] },
+    { skill, api_key: [SECRETS[5]], password: SECRETS[7] },
+    { skill, api_key: { value: SECRETS[6] }, token: SECRETS[8], other: GHP },
+  ];
+  for (const [skill, end, verdict] of [
+    ["quadron:quadron", result(0.1, { result: "An answer." }), /^PASS$/],
+    ["other:skill", result(0.1, { result: "An answer." }), /^FAIL$/],
+    ["quadron:quadron", result(0.1, { subtype: "error_max_budget_usd" }), /^PARTIAL/],
+  ]) {
+    const b = box();
+    const out = await t2Skills(b, inputsNaming(skill), end);
+    assert.match(out.r.summary.verdict, verdict);
+    assert.ok(t2Line(out).endsWith(`; Skill names [${skill}, ${skill}, ${skill}]`), t2Line(out));
+    const printed = [...out.d.io.lines, ...out.d.io.errors].join("\n");
+    for (const secret of SECRETS) assert.ok(!printed.includes(secret), secret);
+    assert.equal("skillInputs" in out.r.summary, false);
+    assert.equal("skillInputs" in b.summary(), false);
+    assert.equal(out.r.summary.toolCalls.filter((c) => c.name === "Skill").length, 3); // the inputs stay here alone
+  }
+});
+
 test("F6. --row-timeout-seconds aborts a hung call: exit 3, partial, the call stays at its reservation, and the default is 600", async () => {
   const b = box();
   const { r, client } = await run(b, b.argv("T2", {}, ["--row-timeout-seconds", "0.05"]), [{ messages: [init({ mcp_servers: [] })], hang: true }]);

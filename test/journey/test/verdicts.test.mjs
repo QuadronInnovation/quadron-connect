@@ -1,7 +1,8 @@
 // Direct verdict tests, on the records collect() builds from messages shaped per the types.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OFFER_HEURISTIC_NOTE, STATUS_WINDOW_CHARS, T6_STATUS_NOTE, collect, isOffer, judgmentIdFrom, reportsFailedWrite, routingOf, savedWordingFrom, signedClaimField, turnGate, verdictIssue2, verdictT2, verdictT4, verdictT5, verdictT6 } from "../lib/verdicts.mjs";
+import { OFFER_HEURISTIC_NOTE, STATUS_WINDOW_CHARS, T6_STATUS_NOTE, collect, isOffer, judgmentIdFrom, reportsFailedWrite, routingOf, savedWordingFrom, signedClaimField, skillLabel, turnGate, verdictIssue2, verdictT2, verdictT4, verdictT5, verdictT6 } from "../lib/verdicts.mjs";
+import { Redactor } from "../lib/redact.mjs";
 import { CAPTURE, OFFER, READ, SKILL, assistantText, init, result, toolResult, toolUse } from "./helpers.mjs";
 
 const rec = (...msgs) => collect(msgs);
@@ -29,6 +30,44 @@ test("F17. T2 FAIL: an error result, an empty answer, no skill call, no result, 
     const v = verdictT2([s]);
     assert.equal(v.verdict, "FAIL", String(re));
     assert.match(v.notes.join(" "), re);
+  }
+});
+const skillRow = (...uses) => rec(init({ mcp_servers: [] }), ...uses, ok("An answer."));
+test("T2 skill name. the skill key passes, and so does another key with that value, nested or not; the verdict returns no inputs", () => {
+  for (const input of [{ skill: "quadron:quadron", args: "x" }, { name: "quadron:quadron" }, { a: { b: ["quadron:quadron"] } }, { skill: "other:skill", args: "quadron:quadron" }]) {
+    const v = verdictT2([skillRow(toolUse("s", "Skill", input))]);
+    assert.equal(v.verdict, "PASS", JSON.stringify(input));
+    assert.equal("skillInputs" in v, false);
+  }
+});
+test("T2 skill name. the labels: the skill value, a name held elsewhere, none, a non-string skill, and a long or control-character value reduced", () => {
+  const label = (input) => skillLabel(input, new Redactor());
+  assert.equal(label({ skill: "other:skill", args: "x" }), "other:skill");
+  assert.equal(label({ skill: "other:skill", args: "quadron:quadron" }), "other:skill");
+  assert.equal(label({ name: "quadron:quadron" }), "quadron:quadron");
+  assert.equal(label({ a: { b: ["quadron:quadron"] } }), "quadron:quadron");
+  for (const none of [{}, { n: 1 }, { args: "other" }, "quadron:quadron", null, undefined]) assert.equal(label(none), "no skill name", JSON.stringify(none));
+  for (const bad of [1, true, null, ["other"], { a: "other" }, ""]) assert.equal(label({ skill: bad }), "no skill name", JSON.stringify(bad));
+  assert.equal(label({ skill: 1, name: "quadron:quadron" }), "quadron:quadron");
+  assert.equal(label({ skill: "y".repeat(500) }), "y".repeat(40));
+  assert.equal(label({ skill: "a\nb\tc\u001b[0m d" }), "a_b_c__0m_d");
+  assert.equal(label({ skill: "[x], y" }), "_x___y");
+});
+test("T2 skill name. another name, no string values or a non-object input fail", () => {
+  for (const input of [{ skill: "other:skill", args: "x" }, { skill: "quadron" }, { skill: "quadron:quadron " }, {}, { n: 1, ok: true }, "quadron:quadron", undefined]) {
+    const v = verdictT2([skillRow(toolUse("s", "Skill", input))]);
+    assert.equal(v.verdict, "FAIL", JSON.stringify(input));
+    assert.match(v.notes.join(" "), /1 of 1 Skill calls hold no value equal to quadron:quadron/);
+  }
+});
+test("T2 skill name. every Skill call is held to it: a denied or errored one with another name fails beside a good call", () => {
+  const good = () => [toolUse("g", "Skill", { skill: "quadron:quadron" }), toolResult("g", "ok")];
+  const errored = verdictT2([skillRow(toolUse("e", "Skill", { skill: "other" }), toolResult("e", "boom", true), ...good())]);
+  const refused = skillRow(toolUse("d", "Skill", { skill: "other" }), ...good());
+  refused.denied_ids.add("d");
+  for (const v of [errored, verdictT2([refused])]) {
+    assert.equal(v.verdict, "FAIL");
+    assert.match(v.notes.join(" "), /1 of 2 Skill calls/);
   }
 });
 
