@@ -27,7 +27,7 @@ The output goes to the screen. Merge it by hand. Never redirect it over an exist
 
 The [Codex MCP docs](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) currently show two places: `~/.codex/config.toml`, or `.codex/config.toml` in a trusted project. They say the ChatGPT desktop app, the Codex CLI and the IDE extension share this configuration. The [config reference](https://learn.chatgpt.com/docs/config-file/config-reference) lists `url` as the server's endpoint.
 
-The pages read returned `codex mcp add` only in its stdio form, so this page does not use it for a remote server. Remote MCP servers in Codex cloud are not stated on the pages read, and this page does not cover them.
+The docs show `codex mcp add` with a remote URL only together with an OAuth client ID, for servers that need a pre-registered client, and no plain remote form was found, so this page uses `config.toml` instead. Remote MCP servers in Codex cloud are not stated on the pages read, and this page does not cover them.
 
 ## Sign-in
 
