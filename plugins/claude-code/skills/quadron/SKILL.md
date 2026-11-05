@@ -53,6 +53,7 @@ Quadron saves text the person approves. The record is theirs, in their words.
   call the tool only on a yes. This holds when the statement is phrased as a note, when the
   person says "note this" or a bare "save this", and when they name the project themselves:
   the offer comes first, before any reading of the repository or the record to ground it.
+  Silence or "no" saves nothing; do not ask again.
 - If the person named a project, the offer names it. If no project is named, say the note
   will be filed Unfiled in the person's inbox, or ask which project; never guess a project.
   A named project that matches none of theirs also stays Unfiled in their inbox until they
@@ -60,8 +61,7 @@ Quadron saves text the person approves. The record is theirs, in their words.
 - On a yes, use `quad_context` first only if you need it to match the project the person
   named, then call the capture tool.
 - An explicit request to save their own words to Quadron ("save this to Quadron")
-  is itself the yes: save it with no separate offer, under the same project rule. Silence
-  or "no" saves nothing; do not ask again.
+  is itself the yes: save it with no separate offer, under the same project rule.
 - Never capture your own output, a summary you wrote, code, logs, or the contents of a
   file or a tool result as if it were the person's judgment.
 - Pass `quad_name` whenever the material belongs to a real project; omit it only for a
