@@ -6,6 +6,8 @@
 // disallowed on a no-write turn: the skill's offer depends on them being listed, and dontAsk denies
 // the call. Connector tools may be deferred, and nothing can approve ToolSearch later, so every
 // connector turn lists it.
+//
+// The session's built-in set comes from the same list: see turnTools below.
 
 const q = (t) => `mcp__quadron__${t}`;
 export const CAPTURE_PLACEHOLDER = "<captureTool>";
@@ -30,8 +32,9 @@ export const ROWS = {
       prompt: "What do I already think about pricing? Check my Quadron record and tell me what it says.",
     }],
   },
-  // No session: the session-start hook never fires in bare mode. T3 is the unit-level check that
-  // runs the hook script against an empty home, in the harness tests.
+  // No session: the session-start hook never fires here, since no user settings load and the settings
+  // file may not carry hooks. T3 is the unit-level check that runs the hook script against an empty
+  // home, in the harness tests.
   T3: { noSession: true, connector: false, turns: [] },
   T4: {
     connector: true,
@@ -83,6 +86,13 @@ export const ROWS = {
 };
 
 export const ROW_NAMES = Object.keys(ROWS);
+
+// A turn's `tools` option: the built-in names in its allow-list, plus the tools a row's outside check
+// watches. Connector names and the capture tool stay in `allowedTools` only.
+export const turnTools = (def, turn) => [...new Set([
+  ...turn.tools.filter((t) => t !== CAPTURE_PLACEHOLDER && !t.startsWith("mcp__")),
+  ...(def.outsideCheck ?? []),
+])];
 
 export const pickCaptureTool = (tools) =>
   Array.isArray(tools) && tools.includes(q("future_you_capture")) ? q("future_you_capture") : q("quad_commit");

@@ -15,7 +15,7 @@ const reportedCost = (m) => (typeof m?.total_cost_usd === "number" && Number.isF
 const userMessage = (text) => ({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null });
 
 // `deadline` is a promise that resolves when the row's wall-clock limit is reached. Returns
-// { promptYielded, gate, initRecord, messages, error, timedOut, queryThrew, order, interrupted,
+// { promptYielded, gate, initRecord, accountShown, messages, error, timedOut, queryThrew, order, interrupted,
 // costAfterInterrupt, highestCost }. `order` is the stream's message labels up to and including init,
 // with a marker where the prompt went out. The docs promise neither that order nor a cost after an
 // interrupt, so the first T2 settles both from this record. `highestCost` is the largest total the
@@ -24,7 +24,8 @@ export async function runGatedCall({ client, options, prompt, def, lifts = [], t
   const held = deferred();
   const finished = deferred();
   const tripped = deferred();
-  const out = { promptYielded: false, gate: null, initRecord: null, messages: [], error: null, timedOut: false, queryThrew: false, order: [], interrupted: false, costAfterInterrupt: null, highestCost: null };
+  const gateDef = { ...def, tools: options.tools }; // init is checked against what this call asked for
+  const out = { promptYielded: false, gate: null, initRecord: null, accountShown: null, messages: [], error: null, timedOut: false, queryThrew: false, order: [], interrupted: false, costAfterInterrupt: null, highestCost: null };
 
   async function* input() {
     const go = await held.promise;
@@ -55,17 +56,18 @@ export async function runGatedCall({ client, options, prompt, def, lifts = [], t
     onMessage,
     stopOn: (m, isInit) => {
       if (released && loadCheckPending) {
-        // The stream's first message after the prompt is the load check.
+        // The stream's first message after the prompt is the load check. A system message that is not
+        // init does not count, and never reaches here: the pump passes over it.
         loadCheckPending = false;
         if (!isInit) return trip(loadFailureGate({ message: nonInitFirstMessage(m) }));
-        const failed = checkInitMessage(m, def, lifts);
+        const failed = checkInitMessage(m, gateDef, lifts);
         if (failed) return trip(loadFailureGate(failed));
         if (out.initRecord) out.initRecord.gateSource = "first message after the prompt";
         return false;
       }
       // Every other init message, before or after the prompt.
       if (!isInit) return false;
-      const gate = out.gate ?? checkInitMessage(m, def, lifts);
+      const gate = out.gate ?? checkInitMessage(m, gateDef, lifts);
       if (!gate) return false;
       if (released) return trip(gate);
       out.gate = gate;
@@ -87,7 +89,7 @@ export async function runGatedCall({ client, options, prompt, def, lifts = [], t
     out.highestCost = costs.length ? Math.max(...costs) : null;
   };
 
-  const gates = await Promise.race([runGates({ q, pump, def, lifts, timeoutMs }), expired]);
+  const gates = await Promise.race([runGates({ q, pump, def: gateDef, lifts, timeoutMs }), expired]);
   if (gates === "expired") {
     out.timedOut = true;
     held.resolve(false);
@@ -95,6 +97,7 @@ export async function runGatedCall({ client, options, prompt, def, lifts = [], t
     return out;
   }
   out.initRecord = gates.initRecord;
+  out.accountShown = gates.accountShown;
   out.gate = gates.gate ?? out.gate; // an init message may have stopped the pump since the gates last looked
   // A stream that is already over cannot answer a prompt: it would be charged for nothing.
   if (!out.gate && pump.finished) out.gate = stopGate(EXIT.STOPPED, "the stream ended before the prompt");
@@ -110,7 +113,7 @@ export async function runGatedCall({ client, options, prompt, def, lifts = [], t
   held.resolve(true);
   const ended = await Promise.race([pump.ended.then(() => "ended"), tripped.promise.then(() => "tripped"), expired]);
   if (ended === "expired") out.timedOut = true;
-  if (ended === "ended" && loadCheckPending && !pump.error) out.gate = out.gate ?? loadFailureGate({ message: "the stream ended after the prompt with no message" });
+  if (ended === "ended" && loadCheckPending && !pump.error) out.gate = out.gate ?? loadFailureGate({ message: "the stream ended after the prompt with no init message" });
   if (ended === "expired" || out.gate) {
     out.interrupted = true;
     try { await Promise.race([q.interrupt?.(), settle()]); } catch { /* closing only */ }

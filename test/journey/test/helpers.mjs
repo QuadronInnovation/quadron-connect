@@ -91,10 +91,14 @@ export function box({ settings = goodSettings(), entries = [], record = [] } = {
 // ---- messages (shapes per sdk.d.ts: init :6234, result :5960)
 export const init = (o = {}) => ({
   type: "system", subtype: "init", session_id: "s1", apiKeySource: "ANTHROPIC_API_KEY",
-  claude_code_version: "2.1.300", tools: ["Skill", "mcp__quadron__quad_context", "mcp__quadron__future_you_capture"],
+  claude_code_version: "2.1.300", tools: ["Skill", "mcp__quadron__quad_context", "mcp__quadron__quad_search", "mcp__quadron__quad_recall", "mcp__quadron__quad_read", "mcp__quadron__future_you_capture"],
   mcp_servers: [{ name: "quadron", status: "connected" }], plugins: [{ name: "quadron", path: "/x" }],
   skills: [], slash_commands: [], output_style: "x", cwd: "/x", fast_mode_state: "off", ...o,
 });
+// An init-only form asks for no tools, so its init lists none.
+export const initForm = (o = {}) => init({ tools: [], ...o });
+// What an init form prints when the account object names only the auth source.
+export const authOutput = (source = "ANTHROPIC_API_KEY") => [`AUTH_SOURCE=${source}`, "TOKEN_SOURCE=not shown", "SUBSCRIPTION_TYPE=not shown"];
 export const result = (cost, o = {}) => ({
   type: "result", subtype: "success", session_id: "s1", result: "", num_turns: 1, total_cost_usd: cost, permission_denials: [], ...o,
 });

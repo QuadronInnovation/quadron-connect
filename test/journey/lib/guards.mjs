@@ -58,7 +58,13 @@ export const ENV_ALLOWLIST = {
   HOMEPATH: "same, on Windows, only when that directory has a drive",
   [KEY_VAR]: "the one credential the run may use",
   CLAUDE_CONFIG_DIR: "relocates the config directory, set by the harness",
+  // code.claude.com/docs/en/agent-sdk/claude-code-features. With no bare mode, this is what keeps auto
+  // memory out of a session.
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "docs: agent-sdk/claude-code-features, set by the harness to 1",
+  CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "set by the harness to 1: no built-in sub-agents in a session",
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "set by the harness to 1: nothing runs behind a turn",
+  CLAUDE_CODE_DISABLE_AGENT_VIEW: "set by the harness to 1: no agent view",
+  CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "set by the harness to 1: no plugin arrives from a marketplace",
   // Documented at code.claude.com/docs/en/env-vars, read 2026-11-04.
   CLAUDE_CODE_MAX_OUTPUT_TOKENS: "caps a response, set by the harness. The docs say \"for most requests\", so not all",
   CLAUDE_CODE_MAX_RETRIES: "set by the harness to 1. Whether retries can be disabled fully is not stated",
@@ -72,7 +78,9 @@ export const ENV_ALLOWLIST = {
 
 const HOME_VARS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
 // Set here and never inherited, so a parent environment cannot loosen them.
-const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_RETRIES",
+const FIXED_ON = ["CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+  "CLAUDE_CODE_DISABLE_AGENT_VIEW", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"];
+const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_RETRIES",
   "CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "FORCE_PROMPT_CACHING_5M"];
 
 // UNMEASURED until a keyed run: whether the binary and the session work with an empty home, and
@@ -92,7 +100,7 @@ export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens }) {
     out.HOMEPATH = path.win32.normalize(homeDir).slice(2);
   }
   if (configDir) out.CLAUDE_CONFIG_DIR = configDir;
-  out.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+  for (const k of FIXED_ON) out[k] = "1";
   out.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokens);
   out.CLAUDE_CODE_MAX_RETRIES = "1";
   out.CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES = "0";
@@ -132,25 +140,42 @@ export function fastModeOn(init) {
 export const fastModeStatedOff = (init) => init?.fast_mode_state === "off";
 
 // The settings given with --settings may carry only deny rules: nothing that widens a session or
-// changes its credential, environment, mode or cache pricing. Bare keeps settings-file hooks from firing (sdk.d.ts:4338), but
-// that is not confirmable here, so hooks refuse too. An allow rule would widen a turn's allow-list.
-// Stated only by key: a value is never printed. No override lifts these.
-const SETTINGS_REFUSED = ["hooks", "apiKeyHelper", "env", "promptCacheTtl", "subagentPromptCacheTtl"];
-export function checkSettingsBare(settings) {
-  const has = (o, k) => Boolean(o) && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k);
-  for (const k of SETTINGS_REFUSED) if (has(settings, k)) throw new Refusal(`the settings file may carry only deny rules: it contains ${k}; refusing`);
-  const permissions = has(settings, "permissions") ? settings.permissions : null;
-  if (has(permissions, "defaultMode")) throw new Refusal("the settings file may carry only deny rules: it contains permissions.defaultMode; refusing");
-  const allow = has(permissions, "allow") ? permissions.allow : null;
-  if (allow !== null && !(Array.isArray(allow) && allow.length === 0)) throw new Refusal("the settings file may carry only deny rules: it has permissions.allow rules; refusing");
+// changes its credential, environment, mode or cache pricing. So these are allowlists, and a key not
+// named here refuses. No user or project settings load, so this file is the one settings layer a hook
+// could come from, and it may not carry any. An allow rule would widen a turn's allow-list. Stated only
+// by key: a value is never printed.
+//
+// No override reaches this: it takes the settings and nothing else. The `settings_deny` lift applies
+// only to checkSettingsDeny below, the check that the required web and browser deny rules are present.
+const SETTINGS_KEYS = ["$schema", "permissions", "fastMode"];
+const SETTINGS_PERMISSION_KEYS = ["deny", "allow"];
+const isPlainObject = (o) => Boolean(o) && typeof o === "object" && !Array.isArray(o);
+export function checkSettingsDenyOnly(settings) {
+  const refuse = (what) => new Refusal(`the settings file may carry only deny rules: ${what}; refusing`);
+  if (!isPlainObject(settings)) throw refuse("it is not an object");
+  for (const k of Object.keys(settings)) if (!SETTINGS_KEYS.includes(k)) throw refuse(`it contains ${k}`);
+  if (!Object.prototype.hasOwnProperty.call(settings, "permissions")) return;
+  const { permissions } = settings;
+  if (!isPlainObject(permissions)) throw refuse("permissions is not an object");
+  for (const k of Object.keys(permissions)) if (!SETTINGS_PERMISSION_KEYS.includes(k)) throw refuse(`it contains permissions.${k}`);
+  const allow = Object.prototype.hasOwnProperty.call(permissions, "allow") ? permissions.allow : null;
+  if (allow !== null && !(Array.isArray(allow) && allow.length === 0)) throw refuse("it has permissions.allow rules");
 }
 
-// Every session is bare and dontAsk. Refused at the one place a query starts, and before anything is
-// reserved. No flag or override reaches this: it reads the options and nothing else.
-export function assertBareDontAsk(options) {
-  if (options?.extraArgs?.bare !== null || options?.permissionMode !== "dontAsk") {
-    throw new Refusal("a session must carry the bare option and permission mode dontAsk; nothing started");
-  }
+// What every session must carry. Refused at the one place a query starts, and before anything is
+// reserved. No flag, override or environment name reaches this: it reads the options and nothing else.
+function sessionOptionFault(o) {
+  if (o?.permissionMode !== "dontAsk") return "permissionMode must be dontAsk";
+  if (!Array.isArray(o?.settingSources) || o.settingSources.length !== 0) return "settingSources must be an empty array";
+  if (o?.strictMcpConfig !== true) return "strictMcpConfig must be true";
+  if (typeof o?.settings !== "string" || !o.settings) return "settings must be a non-empty string";
+  if (!Array.isArray(o?.tools)) return "tools must be an array";
+  if (o?.extraArgs !== undefined && o?.extraArgs !== null && "bare" in Object(o.extraArgs)) return "extraArgs must not carry bare";
+  return null;
+}
+export function assertSessionOptions(options) {
+  const fault = sessionOptionFault(options);
+  if (fault) throw new Refusal(`session options refused: ${fault}; nothing started`);
 }
 
 // -------------------------------------------------------------- web and browser tool restrictions
@@ -164,7 +189,10 @@ export const SUBAGENT_TOOLS = ["Agent", "Task"];
 // A bare name removes the tool. A pattern keeps the tool and denies matching calls in every mode;
 // `//` starts an absolute path, and `//**/` matches on any drive (agent-sdk/permissions, read 2026-11-04).
 export const SDK_PACKAGE_DENY = ["Read(//**/node_modules/@anthropic-ai/**)", "Edit(//**/node_modules/@anthropic-ai/**)"];
-export const DISALLOWED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "WebFetch", "WebSearch", ...SUBAGENT_TOOLS, ...SDK_PACKAGE_DENY];
+// Tools that run commands or reach out, per code.claude.com/docs/en/tools-reference: Bash, PowerShell,
+// Monitor, WebFetch, WebSearch, RemoteTrigger, Workflow. The fixed `tools` list and the load check
+// on init cover the rest of that table.
+export const DISALLOWED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Monitor", "RemoteTrigger", "Workflow", "WebFetch", "WebSearch", ...SUBAGENT_TOOLS, ...SDK_PACKAGE_DENY];
 export const LIFTABLE = ["settings_deny", "init_scan", "tool_use_scan"]; // never "library"
 export const OVERRIDE_MAX_MINUTES = 240;
 
@@ -193,6 +221,29 @@ export function checkBrowserArgsEnv(argv, env) {
 export function scanInitTools(tools, lifted = []) {
   if (lifted.includes("init_scan")) return [];
   return (tools ?? []).filter((t) => t === "WebFetch" || t === "WebSearch" || SUBAGENT_TOOLS.includes(t) || BROWSER_TOOL_RE.test(t));
+}
+
+// The only tools outside a turn's `tools` that init may list and pass: not refused, and recorded where a
+// summary exists, which an init form does not have. The three connector names on a connector row, and
+// Skill on an init form. A row with no connector gets none, so T2 stays strict.
+//
+// Passing here grants nothing, but the two resource tools need no permission
+// (code.claude.com/docs/en/tools-reference), so a row could call them though they are on no allow-list.
+// Such a call is neither refused nor judged: a plain note in the summary names it.
+export const CONNECTOR_INIT_TOOLS = ["ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers"];
+export const MCP_RESOURCE_TOOLS = ["ListMcpResourcesTool", "ReadMcpResourceTool"];
+export function toleratedInitTools(listed, { connector = false, initForm = false } = {}) {
+  const names = [...(connector ? CONNECTOR_INIT_TOOLS : []), ...(initForm ? ["Skill"] : [])];
+  return (listed ?? []).filter((t) => names.includes(t));
+}
+
+// Init tools to refuse: everything outside the turn's `tools`, the connector's names and the tolerated
+// list, and any disallowed name even if a turn's `tools` held it. The init_scan lift excuses only what
+// scanInitTools catches, so a shell tool is never excused.
+export function unexpectedInitTools(listed, turnTools, lifted = [], tolerated = []) {
+  const excused = (t) => lifted.includes("init_scan") && scanInitTools([t]).length > 0;
+  const allowed = (t) => (turnTools.includes(t) && !DISALLOWED_TOOLS.includes(t)) || (typeof t === "string" && t.startsWith("mcp__quadron__")) || tolerated.includes(t);
+  return (listed ?? []).filter((t) => !allowed(t) && !excused(t));
 }
 
 export function scanToolUses(toolUses, lifted = []) {
@@ -347,7 +398,8 @@ export function isLoopbackUrl(value) {
   return ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
 }
 
-// Claude Code version floor for bare limits: "Before v2.1.286, these limits held only partly".
+// Claude Code version floor. The value came from the docs' note on what older versions enforced
+// ("Before v2.1.286, these limits held only partly"), and it stays as the oldest version accepted.
 export function versionAtLeast(v, min = "2.1.286") {
   const a = String(v ?? "").split(".").map(Number), b = min.split(".").map(Number);
   if (a.length < 3 || a.some(Number.isNaN)) return false;

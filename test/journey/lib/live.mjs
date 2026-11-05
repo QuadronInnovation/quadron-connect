@@ -4,7 +4,7 @@
 import path from "node:path";
 
 import {
-  EXIT, Refusal, CONNECTOR_VARS, assertBareDontAsk, assertOutsideClone, buildChildEnv, credentialFilesIn, readHead, scanToolUses, snapshotTree,
+  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, readHead, scanToolUses, snapshotTree, toleratedInitTools,
 } from "./guards.mjs";
 import {
   SpendTracker, MAX_OUTPUT_TOKENS, NOT_SHOWN, appendEntry, bindLimit, checkAttempts, checkLedgerMatchesRecord, closeCall, ledgerLimit, markConfirmed,
@@ -13,13 +13,13 @@ import {
 import { appendLimit, appendReservation, appendSettlement, readRecord, recordModelTotal, recordTotal } from "./campaign.mjs";
 import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./connector.mjs";
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
-import { ROWS, CAPTURE_PLACEHOLDER, SERVER_NAME, T3_CHECK, pickCaptureTool } from "./rows.mjs";
-import { BARE_CONFIRMATION, buildOptions, inScope } from "./options.mjs";
+import { ROWS, CAPTURE_PLACEHOLDER, SERVER_NAME, T3_CHECK, pickCaptureTool, turnTools } from "./rows.mjs";
+import { buildOptions, inScope } from "./options.mjs";
 import { VERDICTS, collect, connectorCalled, initStatuses, quadContextCalls, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
 import { runGatedCall } from "./call.mjs";
 import { Evidence, newUniqueDir } from "./evidence.mjs";
-import { DEFAULT_INIT_TIMEOUT_MS, initExitCode } from "./gates.mjs";
+import { DEFAULT_INIT_TIMEOUT_MS, authLines, initExitCode } from "./gates.mjs";
 
 export const DEFAULT_ROW_TIMEOUT_SECONDS = 600;
 const FIXED_PROMPT = "Reply with the single word: ok";
@@ -121,11 +121,11 @@ const streamFacts = (call, s) => ({
 // shows the guard refusing: main takes it as a dependency, no flag sets it, and it runs before the guard.
 function sessionOptions(ctx, args) {
   const options = (ctx.testOptionsHook ?? ((o) => o))(buildOptions(args));
-  assertBareDontAsk(options);
+  assertSessionOptions(options);
   return options;
 }
 // Refuses before any form creates a directory, takes a lock, mints a token or loads the SDK.
-export const checkSessionOptions = (ctx) => { sessionOptions(ctx, {}); };
+export const checkSessionOptions = (ctx) => { sessionOptions(ctx, { settingsPath: ctx.f.settings, tools: [], allowedTools: [] }); };
 
 // ------------------------------------------------------------------- confirmation record
 
@@ -157,7 +157,7 @@ function initDirs({ fs, tmpRoot, repoRoot }) {
 }
 
 const initOptions = (ctx, childEnv, cwd, extra = {}) => sessionOptions(ctx, {
-  settingsPath: ctx.f.settings, pluginDir: ctx.f["plugin-dir"], childEnv, cwd, tools: [],
+  settingsPath: ctx.f.settings, pluginDir: ctx.f["plugin-dir"], childEnv, cwd, tools: [], allowedTools: [],
   model: ctx.f.model, effort: ctx.f.effort, ...extra,
 });
 
@@ -175,7 +175,7 @@ export async function liveInitOnly(ctx) {
     io.err(`hygiene failure: credential-named file in the config or home directory: ${cred.length}`);
     return { exitCode: r.exitCode === EXIT.OK ? EXIT.ROWS_FAILED : r.exitCode, hygiene: cred.length };
   }
-  if (r.line) io.out(r.line); // at most one stdout line: on success, or with fast mode unconfirmed
+  for (const line of r.lines ?? []) io.out(line); // on success, or with fast mode unconfirmed
   return { exitCode: r.exitCode };
 }
 
@@ -202,7 +202,7 @@ async function initWithTurn(ctx) {
   const deadline = new Promise((r) => { timer = setTimeout(r, rowSeconds * 1000); });
   let call;
   try {
-    call = await runGatedCall({ client, options, prompt: FIXED_PROMPT, def: { connector: false, model: f.model }, lifts, timeoutMs, deadline, abortController: new AbortController() });
+    call = await runGatedCall({ client, options, prompt: FIXED_PROMPT, def: { connector: false, initForm: true, model: f.model }, lifts, timeoutMs, deadline, abortController: new AbortController() });
   } finally {
     clearTimeout(timer);
   }
@@ -237,7 +237,7 @@ async function initWithTurn(ctx) {
     io.err(`hygiene failure: credential-named file in the config or home directory: ${cred.length}`);
     return { exitCode: EXIT.ROWS_FAILED, cost };
   }
-  io.out(`AUTH_SOURCE=${call.initRecord.authSource}`);
+  for (const line of authLines(call.initRecord.authSource, call.accountShown)) io.out(line);
   return { exitCode: EXIT.OK, cost };
 }
 
@@ -320,7 +320,7 @@ async function rowAttempt(ctx, def) {
   const beforeTree = def.cwd === "plugin" ? snapshotTree(cwd, fs) : null;
 
   const summary = {
-    partial: false, row, model: f.model, effort: f.effort, mode: "bare (unmeasured)", bareConfirmed: BARE_CONFIRMATION,
+    partial: false, row, model: f.model, effort: f.effort, mode: "not bare",
     command: argv, cwd, head, sessionId: null, exitCode: null,
     account: { check: account.check, note: account.note },
     override: override ? { reason: override.reason, expires: override.expires, lifts: override.lifts } : null,
@@ -334,6 +334,7 @@ async function rowAttempt(ctx, def) {
   let measuredTokens = null; // the largest prompt measured so far in this session
   let serverPending = false; // an init on some turn said 'pending'
   const streams = [];
+  const initToolsSeen = new Set(); // every init of every turn, so a name seen only on a later turn is kept
   const callEntries = [];
   const tracker = new SpendTracker();
   const stop = (why, code) => { summary.partial = true; summary.stoppedBecause = why; exitCode = code; };
@@ -345,9 +346,9 @@ async function rowAttempt(ctx, def) {
 
   try {
     for (const [i, turn] of def.turns.entries()) {
-      const tools = turn.tools.map((t) => (t === CAPTURE_PLACEHOLDER ? captureTool ?? pickCaptureTool(null) : t));
+      const allowedTools = turn.tools.map((t) => (t === CAPTURE_PLACEHOLDER ? captureTool ?? pickCaptureTool(null) : t));
       const options = sessionOptions(ctx, {
-        model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools,
+        model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
         resume: i > 0 ? sessionId : undefined, settingsPath: f.settings, pluginDir: f["plugin-dir"],
         mcpServers, childEnv, cwd,
       });
@@ -370,6 +371,7 @@ async function rowAttempt(ctx, def) {
       });
       const s = collect(call.messages);
       streams.push(s);
+      for (const m of call.messages) if (m.type === "system" && m.subtype === "init" && Array.isArray(m.tools)) m.tools.forEach((t) => initToolsSeen.add(t));
       summary.init = summary.init ?? call.initRecord;
       sessionId = s.init?.session_id ?? s.result?.session_id ?? sessionId;
       summary.sessionId = sessionId;
@@ -474,12 +476,21 @@ async function rowAttempt(ctx, def) {
     const r = s.tool_results.find((x) => x.tool_use_id === u.id);
     return { name: u.name, input: u.input, result: r?.text ?? null, isError: r?.is_error ?? null };
   }));
+  // Plain notes, with no effect on any verdict. A resource tool needs no permission, so a call to one
+  // is not on any allow-list; a hook event ahead of init means a plugin's hook ran, which nothing checks.
+  for (const name of MCP_RESOURCE_TOOLS) {
+    if (summary.toolCalls.some((c) => c.name === name)) summary.notes.push(`${name} was called: it needs no permission, so no allow-list covers it`);
+  }
+  const hookLabels = [...new Set(summary.turns.flatMap((t) => t.messageOrder ?? []).filter((l) => /(^|:)hook_/.test(l)))];
+  if (hookLabels.length) summary.notes.push(`hook events came before init (${hookLabels.join(", ")}); plugin hooks are not checked`);
   const initMsg = streams.find((s) => s.init)?.init;
   if (initMsg) {
     summary.init = {
       ...summary.init, authSource: initMsg.apiKeySource, version: initMsg.claude_code_version, model: initMsg.model ?? "not shown",
       plugins: initMsg.plugins ?? null, servers: initMsg.mcp_servers ?? null, fastState: initMsg.fast_mode_state ?? "not shown",
       permissionMode: initMsg.permissionMode ?? "not shown", // sdk.d.ts:6259; a record only, with no effect on any verdict
+      mcpTools: (Array.isArray(initMsg.tools) ? initMsg.tools : []).filter((t) => typeof t === "string" && t.startsWith("mcp__")), // a record only: a connector row does not require them
+      toleratedTools: toleratedInitTools([...initToolsSeen], def), // a record only: listed outside a turn's tools and let pass, on any of the row's turns
     };
   }
   summary.totalCostUsd = summary.turns.reduce((a, t) => a + t.spendUsd, 0);
@@ -534,7 +545,6 @@ async function rowAttempt(ctx, def) {
   appendEntry(f.ledger, fs, ledger, rowEntry);
 
   io.out(`${row}: ${safe.verdict}${summary.partial ? ` (partial: ${safe.stoppedBecause})` : ""}; call spend ${summary.totalCostUsd.toFixed(4)} USD`);
-  io.out(`bare confirmed: ${BARE_CONFIRMATION}`);
   if (account.note) io.out(red.text(account.note));
   return { exitCode, summary: safe, evidenceDir: evidence.dir };
 }

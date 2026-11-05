@@ -3,16 +3,15 @@ import assert from "node:assert/strict";
 import * as nodefs from "node:fs";
 import path from "node:path";
 import { main } from "../lib/main.mjs";
-import { ENV_ALLOWLIST, REFUSED_ENV, buildChildEnv, checkInstalledSdk, isLoopbackUrl, loadOverride, readHead, versionAtLeast } from "../lib/guards.mjs";
+import { DISALLOWED_TOOLS, ENV_ALLOWLIST, REFUSED_ENV, assertSessionOptions, buildChildEnv, checkInstalledSdk, isLoopbackUrl, loadOverride, readHead, scanInitTools, versionAtLeast } from "../lib/guards.mjs";
 import { isStagingUrl } from "../lib/connector.mjs";
 import { Redactor } from "../lib/redact.mjs";
-import { BARE_CONFIRMATION } from "../lib/options.mjs";
 import { inScope } from "../lib/options.mjs";
-import { MCP_PENDING_BOUND_MS } from "../lib/gates.mjs";
+import { MCP_PENDING_BOUND_MS, startPump } from "../lib/gates.mjs";
 import { initOnly } from "../lib/initonly.mjs";
 import { runGatedCall } from "../lib/call.mjs";
 import {
-  box, fakeClient, liveEnv, init, result, toolUse, toolResult, assistantText, T2_OK, T2_BAD, T4_OK, T5_OK, T6_OK, ISSUE2_OK, fetchStub, goodSettings, KEY, REFRESH, HEAD, HAIKU, MCP_URL, READ, SKILL, SOME_HOME, CAPTURE,
+  box, fakeClient, liveEnv, init, initForm, authOutput, result, toolUse, toolResult, assistantText, T2_OK, T2_BAD, T4_OK, T5_OK, T6_OK, ISSUE2_OK, fetchStub, goodSettings, KEY, REFRESH, HEAD, HAIKU, MCP_URL, READ, SKILL, SOME_HOME, CAPTURE,
   WORST_OPUS, WORST_HAIKU, spent, rowEntry, t6Ready, denial, permissionDenied,
 } from "./helpers.mjs";
 
@@ -179,19 +178,20 @@ test("late init. a bad init first after the prompt: interrupted at once, a load 
   }
 });
 
-test("late init. a first message after the prompt that is not init fails the same way, and the note names bare; the model's output, a hook event and a result alike", async () => {
-  for (const [first, label] of [[assistantText("from the model"), "assistant"], [{ type: "system", subtype: "hook_started" }, "system:hook_started"], [{ type: "system", subtype: "plugin_install" }, "system:plugin_install"]]) {
-    const b = box();
-    const out = await run(b, b.argv("T2"), [{ messages: [first, SKILL(), result(0.2, { result: "accepted?" })] }], { timeoutMs: 20 });
-    assertLoadFailure(out, b);
-    assert.ok(out.r.summary.stoppedBecause.includes(label));
-    assert.match(out.r.summary.stoppedBecause, /evidence bare did not take/);
-    assert.deepEqual(out.r.summary.turns[0].messageOrder, ["<prompt sent>", label]);
-    assert.equal(out.r.summary.turns[0].costAfterInterrupt, 0.2);
-  }
+test("late init. a first message after the prompt that is not init and not a system message fails the same way: the model's output and a result alike", async () => {
+  const b0 = box();
+  const out = await run(b0, b0.argv("T2"), [{ messages: [assistantText("from the model"), SKILL(), result(0.2, { result: "accepted?" })] }], { timeoutMs: 20 });
+  assertLoadFailure(out, b0);
+  assert.ok(out.r.summary.stoppedBecause.includes("assistant"));
+  assert.match(out.r.summary.stoppedBecause, /not init/);
+  assert.deepEqual(out.r.summary.turns[0].messageOrder, ["<prompt sent>", "assistant"]);
+  assert.equal(out.r.summary.turns[0].costAfterInterrupt, 0.2);
   const b = box();
   const onlyResult = await run(b, b.argv("T2"), [{ messages: [result(0.2, { result: "accepted?" })] }], { timeoutMs: 20 });
   assertLoadFailure(onlyResult, b);
+  assert.ok(onlyResult.r.summary.stoppedBecause.includes("result:success"));
+  assert.match(onlyResult.r.summary.stoppedBecause, /not init/);
+  assert.deepEqual(onlyResult.r.summary.turns[0].messageOrder, ["<prompt sent>", "result:success"]);
   assert.equal(onlyResult.r.summary.turns[0].costAfterInterrupt, null); // the only result came before the interrupt
 });
 
@@ -199,7 +199,7 @@ test("late init. no init at all: a stream that ends with no message is a load fa
   const b = box();
   const empty = await run(b, b.argv("T2"), [{ messages: [] }], { timeoutMs: 20 });
   assertLoadFailure(empty, b);
-  assert.match(empty.r.summary.stoppedBecause, /no message/);
+  assert.match(empty.r.summary.stoppedBecause, /no init message/);
   assert.equal(empty.r.summary.turns[0].costAfterInterrupt, null);
   const h = box();
   const hung = await run(h, h.argv("T2", {}, ["--row-timeout-seconds", "0.05"]), [{ messages: [], hang: true }], { timeoutMs: 10 });
@@ -209,15 +209,15 @@ test("late init. no init at all: a stream that ends with no message is a load fa
   near(h.charged(), WORST_OPUS);
 });
 
-test("late init. a non-init message while the prompt is still held stops with no prompt and zero spend", async () => {
+test("late init. a non-system message while the prompt is still held stops with no prompt and zero spend", async () => {
   const b = box();
-  const out = await run(b, b.argv("T2"), [{ messages: T2_OK(), initTiming: "after", before: [{ type: "system", subtype: "hook_started" }] }], { timeoutMs: 20 });
+  const out = await run(b, b.argv("T2"), [{ messages: T2_OK(), initTiming: "after", before: [assistantText("from the model")] }], { timeoutMs: 20 });
   assert.equal(out.r.exitCode, 3);
   assert.equal(out.r.summary.verdict, "LOAD FAILURE");
   assertNoPrompt(out, b);
   assert.equal(b.charged(), 0);
-  assert.match(out.r.summary.stoppedBecause, /hook_started/);
-  assert.deepEqual(b.calls()[0].messageOrder, ["system:hook_started"]);
+  assert.match(out.r.summary.stoppedBecause, /assistant/);
+  assert.deepEqual(b.calls()[0].messageOrder, ["assistant"]);
 });
 
 test("late init. a load failure on Haiku after an Opus pass is no finding", async () => {
@@ -239,7 +239,7 @@ test("late init. no path sends a prompt without confirmed key auth, with init co
     ["absent", 3, /no init result/],
     [new Error("socket closed"), 3, /init failed/],
     [new Error("401 unauthorized"), 4, /auth failure/],
-    [{ account: { apiKeySource: "ANTHROPIC_API_KEY" }, claude_code_version: "1.0.0" }, 3, /bare-limits floor/],
+    [{ account: { apiKeySource: "ANTHROPIC_API_KEY" }, claude_code_version: "1.0.0" }, 3, /version floor/],
     [{ account: { apiKeySource: "ANTHROPIC_API_KEY" }, ...good, fast_mode_state: "on" }, 2, /fast mode/],
     [{ account: { apiKeySource: "ANTHROPIC_API_KEY" }, claude_code_version: "2.1.300" }, 3, /fast mode is unconfirmed/],
     [{ account: { apiKeySource: "ANTHROPIC_API_KEY" }, claude_code_version: "2.1.300", fast_mode_state: null }, 3, /fast mode is unconfirmed/],
@@ -274,7 +274,7 @@ test("late init. init-only forms: plugin_errors in an early init prints no line 
   const n = box();
   const none = await run(n, n.initArgv(), [{ messages: [init()], initTiming: "after", reload: CLEAN_RELOAD }], { timeoutMs: 20 });
   assert.equal(none.r.exitCode, 0);
-  assert.deepEqual(none.d.io.lines, ["AUTH_SOURCE=ANTHROPIC_API_KEY"]);
+  assert.deepEqual(none.d.io.lines, authOutput());
   assert.match(none.d.io.errors.join(" "), /plugin_errors, tools and model were not checked/);
   assert.deepEqual(none.client.prompts, []);
   assert.equal(none.client.reloads, 0);
@@ -375,7 +375,7 @@ test("connector check. connected goes on the first read, on every connector row,
   assert.equal(a.client.statusReads, 0);
   assert.equal("connectorStatus" in t2.calls()[0], false);
   const io = box();
-  const i = await run(io, io.initArgv(), [{ messages: [init()], status: server("failed") }], { timeoutMs: 500 });
+  const i = await run(io, io.initArgv(), [{ messages: [initForm()], status: server("failed") }], { timeoutMs: 500 });
   assert.equal(i.r.exitCode, 0);
   assert.equal(i.client.statusReads, 0);
 });
@@ -503,16 +503,27 @@ test("connector check. it changes no reservation: a call's record reservation is
   near(stop.reservationUsd, none.reservationUsd);
 });
 
-// ---------------------------------------------------------------- bare and dontAsk are required
+// ---------------------------------------------------------------- the session options guard
 
-const stripBare = (o) => { const c = { ...o }; delete c.extraArgs; return c; };
+const without = (k) => (o) => { const c = { ...o }; delete c[k]; return c; };
 const STRIPPED = {
-  "bare removed": stripBare,
-  "extraArgs without bare": (o) => ({ ...o, extraArgs: {} }),
-  "bare with a value": (o) => ({ ...o, extraArgs: { bare: "" } }),
   "permission mode default": (o) => ({ ...o, permissionMode: "default" }),
-  "permission mode absent": (o) => { const c = { ...o }; delete c.permissionMode; return c; },
+  "permission mode absent": without("permissionMode"),
+  "setting sources absent": without("settingSources"),
+  "setting sources holding one": (o) => ({ ...o, settingSources: ["user"] }),
+  "setting sources not an array": (o) => ({ ...o, settingSources: "" }),
+  "strict MCP config false": (o) => ({ ...o, strictMcpConfig: false }),
+  "strict MCP config absent": without("strictMcpConfig"),
+  "strict MCP config truthy": (o) => ({ ...o, strictMcpConfig: "true" }),
+  "settings absent": without("settings"),
+  "settings empty": (o) => ({ ...o, settings: "" }),
+  "settings an object": (o) => ({ ...o, settings: { permissions: {} } }),
+  "tools absent": without("tools"),
+  "tools a preset": (o) => ({ ...o, tools: { type: "preset", preset: "claude_code" } }),
+  "extraArgs with bare": (o) => ({ ...o, extraArgs: { bare: null } }),
+  "extraArgs with a bare value": (o) => ({ ...o, extraArgs: { bare: "" } }),
 };
+const goodOptions = () => ({ permissionMode: "dontAsk", settingSources: [], strictMcpConfig: true, settings: "/s.json", tools: [] });
 const assertRefusedUnstarted = (out, b, label) => {
   assert.equal(out.r.exitCode, 2, label);
   assert.equal(out.r.refused, true, label);
@@ -523,7 +534,15 @@ const assertRefusedUnstarted = (out, b, label) => {
   assert.deepEqual(b.attemptDirs(), [], label);
 };
 
-test("bare required. options without bare or dontAsk refuse on every form, exit 2: no query, no prompt, no reservation, and nothing written", async () => {
+test("session guard. each condition refuses alone, and options meeting all of them pass; extraArgs without bare is allowed", () => {
+  assert.doesNotThrow(() => assertSessionOptions(goodOptions()));
+  assert.doesNotThrow(() => assertSessionOptions({ ...goodOptions(), extraArgs: {} }));
+  for (const [label, strip] of Object.entries(STRIPPED)) assert.throws(() => assertSessionOptions(strip(goodOptions())), /session options refused/, label);
+  assert.throws(() => assertSessionOptions(undefined), /session options refused/);
+  assert.equal(assertSessionOptions.length, 1); // it takes the options and nothing else
+});
+
+test("session guard. each condition refuses on every form, exit 2: no query, no prompt, no reservation, and nothing written", async () => {
   const withTurn = (b) => b.initArgv(["--init-only-with-turn", "--model", HAIKU, "--ledger", b.ledger, "--max-session-usd", "1", "--max-run-usd", "2"]);
   const noKey = (() => { const e = liveEnv(); delete e.ANTHROPIC_API_KEY; return e; })();
   for (const [label, testOptionsHook] of Object.entries(STRIPPED)) {
@@ -542,28 +561,36 @@ test("bare required. options without bare or dontAsk refuse on every form, exit 
   }
 });
 
-test("bare required. a later turn with the options changed refuses before its reservation", async () => {
+test("session guard. a later turn with the options changed refuses before its reservation", async () => {
   const b = box();
-  const hook = (o) => (o.resume ? stripBare(o) : o);
+  const hook = (o) => (o.resume ? without("settingSources")(o) : o);
   const { r, client } = await run(b, b.argv("T4"), T4_OK(), { testOptionsHook: hook });
   assert.equal(r.exitCode, 2);
   assert.equal(client.calls.length, 1);
   assert.equal(b.recordLines().filter((l) => l.type === "reserve").length, 1);
 });
 
-test("bare required. the guard is also where a query starts: both paths that open one refuse stripped options, before the client is reached", async () => {
+test("session guard. it is also where a query starts: both paths that open one refuse each stripped option set, before the client is reached", async () => {
   const client = fakeClient([[init()]]);
-  const options = { permissionMode: "dontAsk" };
-  await assert.rejects(initOnly({ client, options, timeoutMs: 20 }), /bare option/);
-  await assert.rejects(runGatedCall({ client, options, prompt: "p", def: {}, timeoutMs: 20, abortController: new AbortController() }), /bare option/);
+  for (const [label, strip] of Object.entries(STRIPPED)) {
+    const options = strip(goodOptions());
+    await assert.rejects(initOnly({ client, options, timeoutMs: 20 }), /session options refused/, label);
+    await assert.rejects(runGatedCall({ client, options, prompt: "p", def: {}, timeoutMs: 20, abortController: new AbortController() }), /session options refused/, label);
+  }
   assert.equal(client.calls.length, 0);
 });
 
-test("bare required. no override lifts it, and --bare and --no-bare are unknown flags", async () => {
+test("session guard. no override, flag or environment name lifts it, and --bare and --no-bare are unknown flags", async () => {
   const b = box();
   const file = b.p("override.json");
   nodefs.writeFileSync(file, JSON.stringify({ reason: "x", expires: "2026-11-05T01:00:00Z", lifts: ["settings_deny", "init_scan", "tool_use_scan"] }));
-  assertRefusedUnstarted(await run(b, b.argv("T2", {}, ["--override", file]), [T2_OK()], { testOptionsHook: stripBare }), b, "override");
+  const lifting = liveEnv({ CLAUDE_CODE_BARE: "1", QUADRON_ALLOW_BARE: "1", QUADRON_SKIP_GUARD: "1", QUADRON_OVERRIDE: "1" });
+  for (const [label, testOptionsHook] of Object.entries(STRIPPED)) {
+    const c = box();
+    const ovr = c.p("override.json");
+    nodefs.writeFileSync(ovr, nodefs.readFileSync(file, "utf8"));
+    assertRefusedUnstarted(await run(c, c.argv("T2", {}, ["--override", ovr]), [T2_OK()], { testOptionsHook }, lifting), c, `override ${label}`);
+  }
   for (const flag of ["--bare", "--no-bare"]) {
     const c = box();
     const { r, client, d } = await run(c, c.argv("T2", {}, [flag]), [T2_OK()]);
@@ -683,7 +710,7 @@ test("fast mode. an absent or null state in the init result refuses with no prom
     const plain = box();
     const c = await run(plain, plain.initArgv(), [{ messages: [init()], initResult: stated(o) }], { timeoutMs: 20 });
     assert.equal(c.r.exitCode, 5);
-    assert.deepEqual(c.d.io.lines, ["AUTH_SOURCE=ANTHROPIC_API_KEY"]); // the source is stated, and it still fails
+    assert.deepEqual(c.d.io.lines, authOutput()); // the source is stated, and it still fails
     assert.deepEqual(c.client.prompts, []);
     const turn = box();
     const t = await run(turn, withTurnArgv(turn), [{ messages: [init(), result(0.25)], initResult: stated(o) }], { timeoutMs: 20 });
@@ -709,7 +736,7 @@ test("fast mode. the no-prompt init forms print a stated source before stopping 
       const b = box();
       const out = await run(b, b.initArgv(extra), [{ messages: [init()], initResult: { account: { apiKeySource: source }, claude_code_version: "2.1.300", ...state } }], { timeoutMs: 20 }, env);
       assert.equal(out.r.exitCode, 5, name);
-      assert.deepEqual(out.d.io.lines, [`AUTH_SOURCE=${source}`], name);
+      assert.deepEqual(out.d.io.lines, authOutput(source), name);
       assert.deepEqual(out.client.prompts, [], name);
       assert.match(out.d.io.errors.join(" "), /fast mode is unconfirmed/, name);
     }
@@ -741,47 +768,520 @@ test("before the prompt. a stream already over stops with no prompt, exit 3, zer
     assert.equal((await run(b, b.argv("T2"), [T2_OK(0.1, "y")])).r.exitCode, 0);
   }
   const t = box();
-  const turn = await run(t, withTurnArgv(t), [{ messages: [init(), result(0.25)], endsEarly: true }], { timeoutMs: 20 });
+  const turn = await run(t, withTurnArgv(t), [{ messages: [initForm(), result(0.25)], endsEarly: true }], { timeoutMs: 20 });
   assert.equal(turn.r.exitCode, 5); // init forms keep 3 for a timeout alone
   assert.deepEqual(turn.client.prompts, []);
   assert.equal(t.charged(), 0);
   const plain = box(); // no prompt on this form to hold back, and a check by hand reads its line
   const i = await run(plain, plain.initArgv(), [{ messages: [], endsEarly: true }], { timeoutMs: 20 });
   assert.equal(i.r.exitCode, 0);
-  assert.deepEqual(i.d.io.lines, ["AUTH_SOURCE=ANTHROPIC_API_KEY"]);
+  assert.deepEqual(i.d.io.lines, authOutput());
 });
 
-test("before the prompt. an assistant or hook message ahead of init stops as a load failure, with no prompt, zero spend and no attempt, even when init follows", async () => {
-  for (const [first, label] of [[assistantText("from the model"), "assistant"], [{ type: "system", subtype: "hook_started" }, "system:hook_started"], [{ type: "system", subtype: "hook_response", output: "x" }, "system:hook_response"]]) {
-    const b = box();
-    const out = await run(b, b.argv("T2"), [{ messages: T2_OK(), before: [first] }], { timeoutMs: 200 });
-    assert.equal(out.r.exitCode, 3, label);
-    assert.equal(out.r.summary.verdict, "LOAD FAILURE", label);
-    assertNoPrompt(out, b);
-    assert.equal(b.charged(), 0);
-    assert.ok(out.r.summary.stoppedBecause.includes(label));
-    assert.match(out.r.summary.stoppedBecause, /evidence bare did not take/);
-    assert.deepEqual(b.calls()[0].messageOrder, [label, "system:init"]);
-    assert.deepEqual(b.findings(), []);
-    assert.equal((await run(b, b.argv("T2"), [T2_BAD(0.1, "x")])).r.exitCode, 1);
-    assert.equal((await run(b, b.argv("T2"), [T2_OK(0.1, "y")])).r.exitCode, 0);
-  }
+test("before the prompt. a non-system message ahead of init stops as a load failure, with no prompt, zero spend and no attempt, even when init follows", async () => {
+  const label = "assistant";
+  const b = box();
+  const out = await run(b, b.argv("T2"), [{ messages: T2_OK(), before: [assistantText("from the model")] }], { timeoutMs: 200 });
+  assert.equal(out.r.exitCode, 3, label);
+  assert.equal(out.r.summary.verdict, "LOAD FAILURE", label);
+  assertNoPrompt(out, b);
+  assert.equal(b.charged(), 0);
+  assert.ok(out.r.summary.stoppedBecause.includes(label));
+  assert.match(out.r.summary.stoppedBecause, /not init/);
+  assert.deepEqual(b.calls()[0].messageOrder, [label, "system:init"]);
+  assert.deepEqual(b.findings(), []);
+  assert.equal((await run(b, b.argv("T2"), [T2_BAD(0.1, "x")])).r.exitCode, 1);
+  assert.equal((await run(b, b.argv("T2"), [T2_OK(0.1, "y")])).r.exitCode, 0);
   const i = box();
-  const only = await run(i, i.initArgv(), [{ messages: [init()], before: [{ type: "system", subtype: "hook_started" }] }], { timeoutMs: 200 });
+  const only = await run(i, i.initArgv(), [{ messages: [initForm()], before: [assistantText("from the model")] }], { timeoutMs: 200 });
   assert.equal(only.r.exitCode, 5);
   assert.deepEqual(only.d.io.lines, []);
 });
 
+// ---------------------------------------------------------------- system messages ahead of init
+
+const HOOK_STARTED = { type: "system", subtype: "hook_started" };
+const HOOK_RESPONSE = { type: "system", subtype: "hook_response", output: "from a hook" };
+const EARLY_DENIAL = permissionDenied("early", CAPTURE);
+
+test("pre-init system. the pump passes over a system message ahead of init and keeps it out of its messages; one after init stays", async () => {
+  const stream = (async function* () { yield HOOK_STARTED; yield HOOK_RESPONSE; yield EARLY_DENIAL; yield init(); yield HOOK_RESPONSE; yield result(0.1); })();
+  const seen = [];
+  const pump = startPump(stream, { onMessage: (m) => seen.push(m) });
+  await pump.ended;
+  assert.deepEqual(pump.messages.map((m) => m.subtype), ["init", "hook_response", "success"]);
+  assert.equal(seen.length, 6); // the row form's evidence still gets them
+  assert.deepEqual(pump.order, ["system:hook_started", "system:hook_response", "system:permission_denied", "system:init"]);
+  const unrecorded = startPump((async function* () { yield HOOK_STARTED; yield init(); })());
+  await unrecorded.ended;
+  assert.deepEqual(unrecorded.order, ["system:init"]); // an init form passes none
+});
+
+test("pre-init system. while the prompt is held, a row passes over them, records them in evidence, and collect() reads no denial or hook output from them", async () => {
+  const b = box();
+  const out = await run(b, b.argv("T2"), [{ messages: T2_OK(), before: [HOOK_STARTED, HOOK_RESPONSE, EARLY_DENIAL] }], { timeoutMs: 200 });
+  assert.equal(out.r.exitCode, 0);
+  assert.equal(out.r.summary.verdict, "PASS");
+  assert.equal(out.client.prompts.length, 1);
+  assert.deepEqual(out.r.summary.captureAttempts, []);
+  assert.deepEqual(b.calls()[0].messageOrder, ["system:hook_started", "system:hook_response", "system:permission_denied", "system:init", "<prompt sent>"]);
+  const stream = nodefs.readFileSync(path.join(b.out, b.attemptDirs()[0], "stream.jsonl"), "utf8");
+  assert.match(stream, /hook_started/);
+  assert.match(stream, /from a hook/);
+});
+
+test("pre-init system. after the prompt, the load check is the first message apart from them: init passes, an assistant message stops", async () => {
+  const b = box();
+  const [head, ...rest] = T2_OK();
+  const ok = await run(b, b.argv("T2"), [{ messages: [HOOK_STARTED, head, ...rest] }], { timeoutMs: 20 });
+  assert.equal(ok.r.exitCode, 0);
+  assert.equal(ok.client.interrupted, 0);
+  assert.equal(ok.r.summary.init.gateSource, "first message after the prompt");
+  assert.deepEqual(ok.r.summary.turns[0].messageOrder, ["<prompt sent>", "system:hook_started", "system:init"]);
+  const c = box();
+  const bad = await run(c, c.argv("T2"), [{ messages: [HOOK_STARTED, assistantText("from the model"), SKILL(), result(0.2, { result: "accepted?" })] }], { timeoutMs: 20 });
+  assertLoadFailure(bad, c);
+  assert.ok(bad.r.summary.stoppedBecause.includes("assistant"));
+  const d = box();
+  const ended = await run(d, d.argv("T2"), [{ messages: [HOOK_STARTED] }], { timeoutMs: 20 });
+  assertLoadFailure(ended, d);
+  assert.match(ended.r.summary.stoppedBecause, /no init message/);
+});
+
+test("pre-init system. the init forms pass over them, unrecorded: no line changes and no label reaches the ledger", async () => {
+  const i = box();
+  const plain = await run(i, i.initArgv(), [{ messages: [initForm()], before: [HOOK_STARTED, HOOK_RESPONSE] }], { timeoutMs: 200 });
+  assert.equal(plain.r.exitCode, 0);
+  assert.deepEqual(plain.d.io.lines, authOutput());
+  assert.deepEqual(plain.client.prompts, []);
+  const t = box();
+  const turn = await run(t, withTurnArgv(t), [{ messages: [initForm(), result(0.25)], before: [HOOK_STARTED, HOOK_RESPONSE] }], { timeoutMs: 200 });
+  assert.equal(turn.r.exitCode, 0);
+  assert.deepEqual(t.calls()[0].messageOrder, ["system:init", "<prompt sent>"]);
+  assert.ok(!nodefs.readFileSync(t.ledger, "utf8").includes("hook_"));
+});
+
+// ---------------------------------------------------------------- the fixed tool set
+
+const q = (name) => `mcp__quadron__${name}`;
+const TOOLS_TABLE = {
+  T2: [["Skill", "ToolSearch"]],
+  T4: [["Skill", "ToolSearch"], ["Skill", "ToolSearch"]],
+  T5: [["Skill", "ToolSearch", "Read", "Glob", "Grep"], ["Skill", "ToolSearch", "Read", "Glob", "Grep"]],
+  T6: [["Skill", "ToolSearch"]],
+  ISSUE2: [["Skill", "ToolSearch"]],
+};
+const ALLOWED_TABLE = {
+  T2: [["Skill", "ToolSearch"]],
+  T4: [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")], ["Skill", "ToolSearch", CAPTURE]],
+  T5: [["Skill", "ToolSearch"], ["Skill", "ToolSearch"]],
+  T6: [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read")]],
+  ISSUE2: [["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")]],
+};
+const rowBox = (row) => box(row === "T6" ? { entries: t6Ready() } : {});
+const ROW_SCRIPTS = { T2: () => [T2_OK()], T4: () => T4_OK(), T5: () => T5_OK(), T6: () => [T6_OK()], ISSUE2: () => [ISSUE2_OK()] };
+
+test("tools. every row's turns state the fixed `tools` and `allowedTools`; connector names and the capture tool stay out of `tools`; the init forms state none", async () => {
+  for (const [row, expected] of Object.entries(TOOLS_TABLE)) {
+    const b = rowBox(row);
+    const { r, client } = await run(b, b.argv(row), ROW_SCRIPTS[row]());
+    assert.equal(r.exitCode, 0, row);
+    assert.deepEqual(client.calls.map((c) => c.options.tools), expected, row);
+    assert.deepEqual(client.calls.map((c) => c.options.allowedTools), ALLOWED_TABLE[row], row);
+    assert.equal(client.calls.some((c) => "extraArgs" in c.options), false, row);
+  }
+  const i = box();
+  const plain = await run(i, i.initArgv(), [[initForm()]]);
+  assert.deepEqual(plain.client.calls[0].options.tools, []);
+  assert.deepEqual(plain.client.calls[0].options.allowedTools, []);
+  const t = box();
+  const turn = await run(t, withTurnArgv(t), [[initForm(), result(0.25)]]);
+  assert.deepEqual(turn.client.calls[0].options.tools, []);
+  assert.deepEqual(turn.client.calls[0].options.allowedTools, []);
+});
+
+test("tools. the disallowed list holds the docs' tools that run commands or reach out, and none of them is in any row's `tools`", () => {
+  for (const name of ["Bash", "PowerShell", "Monitor", "WebFetch", "WebSearch", "RemoteTrigger", "Workflow"]) {
+    assert.ok(DISALLOWED_TOOLS.includes(name), name);
+    for (const turns of Object.values(TOOLS_TABLE)) for (const tools of turns) assert.ok(!tools.includes(name), name);
+  }
+});
+
+const SHELLS = ["Bash", "PowerShell", "Monitor"];
+
+test("load check. init listing a shell tool, before the prompt: a load failure, no prompt, zero spend, even under the init_scan lift", async () => {
+  const ov = (b) => {
+    nodefs.writeFileSync(b.p("ov.json"), JSON.stringify({ reason: "x", expires: "2026-11-05T01:00:00Z", lifts: ["init_scan"] }));
+    return ["--override", b.p("ov.json")];
+  };
+  for (const name of SHELLS) {
+    for (const lifted of [false, true]) {
+      const b = box();
+      const argv = b.argv("T2", {}, lifted ? ov(b) : []);
+      const out = await run(b, argv, [[init({ mcp_servers: [], tools: ["Skill", name] }), SKILL(), result(0.1, { result: "x" })]]);
+      assert.equal(out.r.exitCode, 3, name);
+      assert.equal(out.r.summary.verdict, "LOAD FAILURE", name);
+      assert.ok(out.r.summary.stoppedBecause.includes(name), name);
+      assertNoPrompt(out, b);
+      assert.equal(b.charged(), 0);
+    }
+    const i = box();
+    const form = await run(i, i.initArgv(), [[initForm({ tools: [name] })]]);
+    assert.equal(form.r.exitCode, 5, name);
+    assert.deepEqual(form.d.io.lines, [], name);
+  }
+});
+
+test("load check. init listing a shell tool or any other built-in after the prompt: a load failure charged at its reservation, no output accepted", async () => {
+  for (const name of [...SHELLS, "Read", "Write"]) {
+    const b = box();
+    const out = await run(b, b.argv("T2"), [{ messages: [init({ mcp_servers: [], tools: ["Skill", name] }), assistantText("from the model"), SKILL(), result(0.1, { result: "accepted?" })], initTiming: "after" }], { timeoutMs: 20 });
+    assertLoadFailure(out, b);
+    assert.ok(out.r.summary.stoppedBecause.includes(name), name);
+  }
+});
+
+test("load check. the init_scan lift excuses only what that scan catches, and without the lift those names keep the row's exit 1", async () => {
+  const b = box();
+  nodefs.writeFileSync(b.p("ov.json"), JSON.stringify({ reason: "x", expires: "2026-11-05T01:00:00Z", lifts: ["init_scan"] }));
+  const out = await run(b, b.argv("T2", {}, ["--override", b.p("ov.json")]), [[init({ mcp_servers: [], tools: ["Skill", "WebFetch", "mcp__chrome__open"] }), SKILL(), result(0.01, { result: "x" })]]);
+  assert.equal(out.r.exitCode, 0);
+  const c = box();
+  const scan = await run(c, c.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill", "WebFetch"] })]]);
+  assert.equal(scan.r.exitCode, 1);
+  assert.deepEqual(scan.client.prompts, []);
+  assert.notEqual(scan.r.summary.verdict, "LOAD FAILURE");
+});
+
+test("load check. a name from another MCP server that the scan does not catch is a load failure", async () => {
+  const b = box();
+  const out = await run(b, b.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill", "mcp__other__tool"] })]]);
+  assert.equal(out.r.exitCode, 3);
+  assert.equal(out.r.summary.verdict, "LOAD FAILURE");
+  assert.match(out.r.summary.stoppedBecause, /mcp__other__tool/);
+});
+
+test("load check. init missing Skill is a load failure naming it, not a row FAIL: no prompt and no spend before it, only the charged reservation after it", async () => {
+  const b = box();
+  const before = await run(b, b.argv("T2"), [[init({ mcp_servers: [], tools: ["ToolSearch"] }), result(0.1, { result: "x" })]]);
+  assert.equal(before.r.exitCode, 3);
+  assert.equal(before.r.summary.verdict, "LOAD FAILURE");
+  assert.match(before.r.summary.stoppedBecause, /Skill/);
+  assertNoPrompt(before, b);
+  assert.equal(b.charged(), 0);
+  const c = box();
+  const after = await run(c, c.argv("T2"), [{ messages: [init({ mcp_servers: [], tools: ["ToolSearch"] }), assistantText("from the model"), result(0.1, { result: "accepted?" })], initTiming: "after" }], { timeoutMs: 20 });
+  assertLoadFailure(after, c);
+  assert.match(after.r.summary.stoppedBecause, /Skill/);
+  const none = box();
+  const noList = await run(none, none.argv("T2"), [[init({ mcp_servers: [], tools: undefined })]]);
+  assert.equal(noList.r.summary.verdict, "LOAD FAILURE");
+});
+
+test("load check. the second turn is held to it too: Skill gone from a resumed session's init is a load failure", async () => {
+  const b = box();
+  const [first] = T4_OK();
+  const out = await run(b, b.argv("T4"), [first, { messages: [init({ session_id: "s9", tools: ["ToolSearch", CAPTURE] }), result(0.2, { session_id: "s9", result: "x" })], initTiming: "after" }], { timeoutMs: 20 });
+  assert.equal(out.r.exitCode, 3);
+  assert.equal(out.r.summary.verdict, "LOAD FAILURE");
+  assert.equal(out.client.prompts.length, 2);
+});
+
+test("load check. ToolSearch missing passes; a healthy init passes; connector names are recorded and not required; the built-in plugins pass and are recorded", async () => {
+  const b = box();
+  const noSearch = await run(b, b.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill"] }), SKILL(), result(0.1, { result: "x" })]]);
+  assert.equal(noSearch.r.exitCode, 0);
+  assert.deepEqual(noSearch.r.summary.init.mcpTools, []);
+  const plugins = [{ name: "quadron", path: "/x" }, { name: "cc-plugin-agents-md", path: "/y" }, { name: "cc-plugin-plugin-authoring", path: "/z" }];
+  const tools = ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read")];
+  const c = box();
+  const [head, ...rest] = ISSUE2_OK();
+  const healthy = await run(c, c.argv("ISSUE2"), [[{ ...head, tools, plugins }, ...rest]]);
+  assert.equal(healthy.r.exitCode, 0);
+  assert.deepEqual(healthy.r.summary.init.mcpTools, tools.slice(2));
+  assert.deepEqual(healthy.r.summary.init.plugins.map((p) => p.name), plugins.map((p) => p.name));
+  assert.deepEqual(healthy.client.calls[0].options.skills, ["quadron:quadron"]);
+  const d = box();
+  const noMcp = await run(d, d.argv("ISSUE2"), [[{ ...head, tools: ["Skill", "ToolSearch"] }, ...rest]]);
+  assert.equal(noMcp.r.exitCode, 0);
+  assert.deepEqual(noMcp.r.summary.init.mcpTools, []);
+  const t5 = box();
+  const reads = await run(t5, t5.argv("T5"), T5_OK().map(([i, ...more]) => [{ ...i, tools: ["Skill", "ToolSearch", "Read", "Glob", "Grep"] }, ...more]));
+  assert.equal(reads.r.exitCode, 0);
+});
+
+test("load check. the init forms require no Skill and let it pass when listed; any other built-in listed fails them", async () => {
+  const b = box();
+  assert.equal((await run(b, b.initArgv(), [[initForm()]])).r.exitCode, 0);
+  const c = box();
+  assert.equal((await run(c, c.initArgv(), [[initForm({ tools: [q("quad_context")] })]])).r.exitCode, 0);
+  const d = box();
+  const skill = await run(d, d.initArgv(), [[initForm({ tools: ["Skill"] })]]);
+  assert.equal(skill.r.exitCode, 0);
+  assert.deepEqual(skill.d.io.lines, authOutput());
+  const t = box();
+  const turn = await run(t, withTurnArgv(t), [{ messages: [initForm({ tools: ["Skill"] }), result(0.25)], initTiming: "after" }], { timeoutMs: 20 });
+  assert.equal(turn.r.exitCode, 0);
+  near(t.charged(), 0.25);
+  const e = box();
+  assert.equal((await run(e, e.initArgv(), [[initForm({ tools: ["Read"] })]])).r.exitCode, 5);
+  const u = box();
+  const late = await run(u, withTurnArgv(u), [{ messages: [initForm({ tools: ["Skill", "Read"] }), result(0.25)], initTiming: "after" }], { timeoutMs: 20 });
+  assert.equal(late.r.exitCode, 5);
+  near(u.charged(), WORST_HAIKU);
+});
+
+const CONNECTOR_EXTRAS = ["ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers"];
+const WRITES_OR_RUNS = ["Bash", "PowerShell", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Monitor"];
+const CAUGHT_BY_SCAN = ["WebFetch", "WebSearch"];
+const withInitTools = (extra) => (script) => script.map(([i, ...more]) => [{ ...i, tools: [...i.tools, ...extra] }, ...more]);
+
+test("load split. the three connector tools on every connector row pass and are recorded in the summary; a row without them records none", async () => {
+  for (const row of ["T4", "T5", "T6", "ISSUE2"]) {
+    const b = rowBox(row);
+    const out = await run(b, b.argv(row), withInitTools(CONNECTOR_EXTRAS)(ROW_SCRIPTS[row]()));
+    assert.equal(out.r.exitCode, 0, row);
+    assert.deepEqual(b.summary().init.toleratedTools, CONNECTOR_EXTRAS, row);
+    assert.ok(!b.summary().init.mcpTools.some((t) => CONNECTOR_EXTRAS.includes(t)), row);
+  }
+  const plain = box();
+  await run(plain, plain.argv("ISSUE2"), [ISSUE2_OK()]);
+  assert.deepEqual(plain.summary().init.toleratedTools, []);
+});
+
+test("load split. the same three on T2 refuse, before the prompt and after it, and the init_scan lift does not excuse them; on an init form they refuse too", async () => {
+  for (const name of CONNECTOR_EXTRAS) {
+    const b = box();
+    const before = await run(b, b.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill", name] }), SKILL(), result(0.1, { result: "x" })]]);
+    assert.equal(before.r.exitCode, 3, name);
+    assert.equal(before.r.summary.verdict, "LOAD FAILURE", name);
+    assert.ok(before.r.summary.stoppedBecause.includes(name), name);
+    assertNoPrompt(before, b);
+    const c = box();
+    const after = await run(c, c.argv("T2"), [{ messages: [init({ mcp_servers: [], tools: ["Skill", name] }), assistantText("from the model"), result(0.1, { result: "accepted?" })], initTiming: "after" }], { timeoutMs: 20 });
+    assertLoadFailure(after, c);
+    const l = box();
+    nodefs.writeFileSync(l.p("ov.json"), JSON.stringify({ reason: "x", expires: "2026-11-05T01:00:00Z", lifts: ["init_scan"] }));
+    const lifted = await run(l, l.argv("T2", {}, ["--override", l.p("ov.json")]), [[init({ mcp_servers: [], tools: ["Skill", name] })]]);
+    assert.equal(lifted.r.summary.verdict, "LOAD FAILURE", name);
+    const i = box();
+    const form = await run(i, i.initArgv(), [[initForm({ tools: [name] })]]);
+    assert.equal(form.r.exitCode, 5, name);
+    assert.deepEqual(form.d.io.lines, [], name);
+  }
+});
+
+test("load split. a tool that writes, runs commands or reaches out, after the prompt, is a load failure on T2 and on a connector row alike", async () => {
+  for (const name of WRITES_OR_RUNS) {
+    for (const [row, base] of [["T2", { mcp_servers: [] }], ["ISSUE2", {}]]) {
+      const b = box();
+      const out = await run(b, b.argv(row), [{ messages: [init({ ...base, tools: ["Skill", name] }), assistantText("from the model"), result(0.1, { result: "accepted?" })], initTiming: "after" }], { timeoutMs: 20 });
+      assertLoadFailure(out, b);
+      assert.ok(out.r.summary.stoppedBecause.includes(name), `${row} ${name}`);
+    }
+  }
+});
+
+test("load split. the same tools before the prompt never let it go: a load failure at zero spend, except that what the existing scan catches keeps its exit 1", async () => {
+  for (const name of WRITES_OR_RUNS) {
+    const b = box();
+    const out = await run(b, b.argv("ISSUE2"), [[init({ tools: ["Skill", name] }), result(0.1, { result: "x" })]]);
+    assertNoPrompt(out, b);
+    assert.equal(b.charged(), 0, name);
+    if (CAUGHT_BY_SCAN.includes(name)) {
+      assert.equal(out.r.exitCode, 1, name);
+      assert.notEqual(out.r.summary.verdict, "LOAD FAILURE", name);
+    } else {
+      assert.equal(out.r.exitCode, 3, name);
+      assert.equal(out.r.summary.verdict, "LOAD FAILURE", name);
+    }
+  }
+});
+
+test("load split. an unlisted tool that looks harmless refuses everywhere: on T2, on a connector row and on an init form", async () => {
+  const name = "TodoWrite";
+  const t2 = box();
+  const a = await run(t2, t2.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill", name] })]]);
+  assert.equal(a.r.summary.verdict, "LOAD FAILURE");
+  assert.ok(a.r.summary.stoppedBecause.includes(name));
+  const row = box();
+  const c = await run(row, row.argv("ISSUE2"), [[init({ tools: ["Skill", ...CONNECTOR_EXTRAS, name] })]]);
+  assert.equal(c.r.summary.verdict, "LOAD FAILURE");
+  assert.ok(c.r.summary.stoppedBecause.includes(name));
+  assert.ok(!CONNECTOR_EXTRAS.some((t) => c.r.summary.stoppedBecause.includes(t))); // only the refused name is blamed
+  const i = box();
+  assert.equal((await run(i, i.initArgv(), [[initForm({ tools: [name] })]])).r.exitCode, 5);
+});
+
+test("load split. a tolerated name seen only on a later turn is recorded, and a name on several turns is recorded once", async () => {
+  const b = box();
+  const [first, second] = T4_OK();
+  const script = [withInitTools(["ReadMcpResourceTool"])([first])[0], withInitTools(["ReadMcpResourceTool", "WaitForMcpServers"])([second])[0]];
+  const out = await run(b, b.argv("T4"), script);
+  assert.equal(out.r.exitCode, 0);
+  assert.deepEqual(b.summary().init.toleratedTools, ["ReadMcpResourceTool", "WaitForMcpServers"]);
+});
+
+test("load split. a tool name that is not a string refuses through the load failure path, before and after the prompt, never as a thrown refusal", async () => {
+  for (const name of [7, null, { a: 1 }]) {
+    const b = box();
+    const before = await run(b, b.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill", name] }), SKILL(), result(0.1, { result: "x" })]]);
+    assert.equal(before.r.refused, undefined, String(name));
+    assert.equal(before.r.exitCode, 3, String(name));
+    assert.equal(before.r.summary.verdict, "LOAD FAILURE", String(name));
+    assertNoPrompt(before, b);
+    const c = box();
+    const after = await run(c, c.argv("T2"), [{ messages: [init({ mcp_servers: [], tools: ["Skill", name] }), assistantText("from the model"), result(0.1, { result: "accepted?" })], initTiming: "after" }], { timeoutMs: 20 });
+    assert.equal(after.r.refused, undefined, String(name));
+    assertLoadFailure(after, c);
+    const i = box();
+    const form = await run(i, i.initArgv(), [[initForm({ tools: [name] })]]);
+    assert.equal(form.r.exitCode, 5, String(name));
+    assert.deepEqual(form.d.io.lines, [], String(name));
+  }
+  const d = box(); // a list that is not an array stops too, and the summary is still written
+  const notList = await run(d, d.argv("T2"), [[init({ mcp_servers: [], tools: "Skill" }), SKILL(), result(0.1, { result: "x" })]]);
+  assert.equal(notList.r.refused, undefined);
+  assert.equal(notList.r.exitCode, 3);
+  assertNoPrompt(notList, d);
+  assert.equal(d.summary().mode, "not bare");
+});
+
+test("order. system messages ahead of init cannot crowd it out, with init before the prompt or after it", async () => {
+  const many = Array.from({ length: 30 }, () => HOOK_STARTED);
+  const pump = startPump((async function* () { yield* many; yield init(); })(), { onMessage: () => {} });
+  await pump.ended;
+  assert.equal(pump.order.length, 20);
+  assert.equal(pump.order.at(-1), "system:init");
+  const b = box();
+  const late = await run(b, b.argv("T2"), [{ messages: T2_OK(), initTiming: "after", before: many }], { timeoutMs: 20 });
+  assert.equal(late.r.exitCode, 0);
+  assert.ok(b.calls()[0].messageOrder.includes("system:init"));
+  assert.ok(b.calls()[0].messageOrder.includes("<prompt sent>"));
+});
+
+test("notes. a hook event ahead of init adds a plain note and changes no verdict; no hook event, no note", async () => {
+  const b = box();
+  const out = await run(b, b.argv("T2"), [{ messages: T2_OK(), before: [HOOK_STARTED, HOOK_RESPONSE] }], { timeoutMs: 200 });
+  assert.equal(out.r.exitCode, 0);
+  assert.equal(out.r.summary.verdict, "PASS");
+  assert.ok(b.summary().notes.includes("hook events came before init (system:hook_started, system:hook_response); plugin hooks are not checked"));
+  const c = box();
+  await run(c, c.argv("T2"), [T2_OK()]);
+  assert.ok(!c.summary().notes.some((n) => /hook/.test(n)));
+  const d = box();
+  await run(d, d.argv("T2"), [{ messages: T2_OK(), before: [{ type: "system", subtype: "status" }] }], { timeoutMs: 200 });
+  assert.ok(!d.summary().notes.some((n) => /hook/.test(n)));
+});
+
+test("notes. a call to an MCP resource tool adds a plain note naming it: no refusal and the same verdict; another tool adds none", async () => {
+  for (const name of ["ListMcpResourcesTool", "ReadMcpResourceTool"]) {
+    const b = box();
+    const [head, ...rest] = ISSUE2_OK();
+    const out = await run(b, b.argv("ISSUE2"), [[{ ...head, tools: [...head.tools, name] }, toolUse("m", name, {}), toolResult("m", "listed"), ...rest]]);
+    assert.equal(out.r.exitCode, 0, name);
+    assert.equal(out.r.summary.verdict, "PASS", name);
+    assert.ok(b.summary().notes.includes(`${name} was called: it needs no permission, so no allow-list covers it`), name);
+  }
+  const c = box();
+  await run(c, c.argv("ISSUE2"), [ISSUE2_OK()]);
+  assert.ok(!c.summary().notes.some((n) => /McpResource/.test(n)));
+});
+
+test("load split. a disallowed name refuses even if a turn's tools held it, and no tolerated name is on the disallowed list or caught by the scan", async () => {
+  const b = box();
+  const hook = (o) => ({ ...o, tools: [...o.tools, "Bash"] });
+  const out = await run(b, b.argv("T2"), [[init({ mcp_servers: [], tools: ["Skill", "Bash"] })]], { testOptionsHook: hook });
+  assert.equal(out.r.summary.verdict, "LOAD FAILURE");
+  assert.deepEqual(out.client.prompts, []);
+  for (const name of [...CONNECTOR_EXTRAS, "Skill"]) {
+    assert.ok(!DISALLOWED_TOOLS.includes(name), name);
+    assert.deepEqual(scanInitTools([name]), [], name);
+  }
+});
+
+// ---------------------------------------------------------------- the account lines
+
+const ACCOUNT = { email: "someone@example.test", organization: "Example Org Name", apiKeySource: "ANTHROPIC_API_KEY", tokenSource: "none", subscriptionType: "team" };
+const accountResult = (over = {}) => ({ account: { ...ACCOUNT, ...over }, claude_code_version: "2.1.300", fast_mode_state: "off" });
+const LINES = ["AUTH_SOURCE=ANTHROPIC_API_KEY", "TOKEN_SOURCE=none", "SUBSCRIPTION_TYPE=team"];
+const assertNoAccountLeak = (b, d) => {
+  const all = everything(b, d);
+  for (const secret of [ACCOUNT.email, ACCOUNT.organization]) assert.ok(!all.includes(secret), secret);
+};
+
+test("account lines. both init forms print the three lines in order, and neither email nor organization reaches stdout, stderr, the ledger or evidence", async () => {
+  const i = box();
+  const plain = await run(i, i.initArgv(), [{ messages: [initForm()], initResult: accountResult() }]);
+  assert.equal(plain.r.exitCode, 0);
+  assert.deepEqual(plain.d.io.lines, LINES);
+  assertNoAccountLeak(i, plain.d);
+  const t = box();
+  const turn = await run(t, withTurnArgv(t), [{ messages: [initForm(), result(0.25)], initResult: accountResult() }]);
+  assert.equal(turn.r.exitCode, 0);
+  assert.deepEqual(turn.d.io.lines, LINES);
+  assertNoAccountLeak(t, turn.d);
+});
+
+test("account lines. absent, empty or non-string values print not shown; a value cannot add a line; a stated fast-mode stop prints them too, exit unchanged", async () => {
+  for (const over of [{ tokenSource: undefined, subscriptionType: undefined }, { tokenSource: "", subscriptionType: "" }, { tokenSource: 7, subscriptionType: { a: 1 } }]) {
+    const b = box();
+    const out = await run(b, b.initArgv(), [{ messages: [initForm()], initResult: accountResult(over) }]);
+    assert.equal(out.r.exitCode, 0);
+    assert.deepEqual(out.d.io.lines, authOutput());
+  }
+  const n = box();
+  const odd = await run(n, n.initArgv(), [{ messages: [initForm()], initResult: accountResult({ tokenSource: "a\nAUTH_SOURCE=x" }) }]);
+  assert.equal(odd.d.io.lines.length, 3);
+  assert.deepEqual(odd.d.io.lines[1], "TOKEN_SOURCE=a_AUTH_SOURCE_x");
+  const f = box();
+  const fast = await run(f, f.initArgv(), [{ messages: [initForm()], initResult: { ...accountResult(), fast_mode_state: undefined } }]);
+  assert.equal(fast.r.exitCode, 5);
+  assert.deepEqual(fast.d.io.lines, LINES);
+  assertNoAccountLeak(f, fast.d);
+});
+
+test("account lines. a row prints none of them, and its summary and evidence carry no account field but the source", async () => {
+  const b = box();
+  const { r, d } = await run(b, b.argv("T2"), [{ messages: T2_OK(), initResult: accountResult() }]);
+  assert.equal(r.exitCode, 0);
+  assert.ok(!d.io.lines.some((l) => /^(AUTH_SOURCE|TOKEN_SOURCE|SUBSCRIPTION_TYPE)=/.test(l)));
+  assertNoAccountLeak(b, d);
+  const s = b.summary();
+  assert.equal("tokenSource" in s.init, false);
+  assert.equal("subscriptionType" in s.init, false);
+  assert.equal(s.init.authSource, "ANTHROPIC_API_KEY");
+});
+
+test("expect-no-key. unchanged: source none is exit 0 with AUTH_SOURCE=none first, an absent source is exit 4 with no line, and it refuses with a turn", async () => {
+  const noKey = liveEnv(); delete noKey.ANTHROPIC_API_KEY;
+  const none = box();
+  const ok = await run(none, none.initArgv(["--expect-no-key"]), [{ messages: [initForm({ apiKeySource: "none" })], initResult: { account: { apiKeySource: "none" }, claude_code_version: "2.1.300", fast_mode_state: "off" } }], {}, noKey);
+  assert.equal(ok.r.exitCode, 0);
+  assert.equal(ok.d.io.lines[0], "AUTH_SOURCE=none");
+  assert.deepEqual(ok.d.io.lines, authOutput("none"));
+  assert.deepEqual(ok.client.prompts, []);
+  const absent = box();
+  const a = await run(absent, absent.initArgv(["--expect-no-key"]), [{ messages: [initForm()], initResult: { account: {}, claude_code_version: "2.1.300", fast_mode_state: "off" } }], {}, noKey);
+  assert.equal(a.r.exitCode, 4);
+  assert.deepEqual(a.d.io.lines, []);
+  const t = box();
+  const turn = await run(t, withTurnArgv(t, { more: ["--expect-no-key"] }), [[initForm(), result(0.25)]], {}, noKey);
+  assert.equal(turn.r.exitCode, 2);
+  assert.equal(turn.client.calls.length, 0);
+});
+
 // ---------------------------------------------------------------- init-only
 
-test("F9. init-only uses the bare options and all gates: one AUTH_SOURCE line, no prompt, empty config accepted, non-empty refused, nothing deleted", async () => {
+test("F9. init-only uses the session options and all gates: the AUTH_SOURCE lines, no prompt, empty config accepted, non-empty refused, nothing deleted", async () => {
   const b = box();
-  const { r, client, d } = await run(b, b.initArgv(), [[init()]]);
+  const { r, client, d } = await run(b, b.initArgv(), [[initForm()]]);
   assert.equal(r.exitCode, 0);
-  assert.deepEqual(d.io.lines, ["AUTH_SOURCE=ANTHROPIC_API_KEY"]);
+  assert.deepEqual(d.io.lines, authOutput());
   assert.deepEqual(client.prompts, []);
   const o = client.calls[0].options;
-  assert.deepEqual(o.extraArgs, { bare: null });
+  assert.equal("extraArgs" in o, false);
+  assert.deepEqual(o.tools, []);
   assert.deepEqual(o.settingSources, []);
   assert.equal(o.strictMcpConfig, true);
   for (const t of ["Agent", "Task", "Bash", "WebFetch"]) assert.ok(o.disallowedTools.includes(t));
@@ -807,7 +1307,7 @@ test("G3. init-only gates: 3 for an init timeout only; other gate failures 5, wi
     [{ messages: [init()], initResult: null }, 5],
     [{ messages: [init()], initResult: new Error("socket closed") }, 5],
     [{ messages: [init()], initResult: new Error("401") }, 4],
-    [{ messages: [{ type: "system", subtype: "hook_started" }], before: [{ type: "system", subtype: "hook_started" }] }, 5],
+    [{ messages: [assistantText("x")], before: [assistantText("x")] }, 5],
   ];
   for (const [script, code] of cases) {
     const b = box();
@@ -827,9 +1327,9 @@ test("F9. --expect-no-key waives only the key refusal, reports the source it see
   assert.equal((await run(b, b.initArgv(), [[init()]], {}, noKey)).r.exitCode, 2);
   for (const src of ["none", "oauth"]) {
     const c = box();
-    const { r, client, d } = await run(c, c.initArgv(["--expect-no-key"]), [[init({ apiKeySource: src })]], {}, noKey);
+    const { r, client, d } = await run(c, c.initArgv(["--expect-no-key"]), [[initForm({ apiKeySource: src })]], {}, noKey);
     assert.equal(r.exitCode, 0);
-    assert.deepEqual(d.io.lines, [`AUTH_SOURCE=${src}`]);
+    assert.deepEqual(d.io.lines, authOutput(src));
     assert.deepEqual(client.prompts, []);
   }
   const gated = box();
@@ -865,16 +1365,17 @@ test("F2. --init-only-with-turn needs --model, --ledger, the session budget and 
   }
 });
 
-test("F2. --init-only-with-turn: one fixed prompt, maxTurns 1, bare options, writes its cost to the ledger, one line", async () => {
+test("F2. --init-only-with-turn: one fixed prompt, maxTurns 1, the session options, writes its cost to the ledger, the AUTH_SOURCE lines", async () => {
   const b = box();
-  const { r, client, d } = await run(b, withTurnArgv(b), [[init(), result(0.25)]]);
+  const { r, client, d } = await run(b, withTurnArgv(b), [[initForm(), result(0.25)]]);
   assert.equal(r.exitCode, 0);
   assert.equal(r.cost, 0.25);
-  assert.deepEqual(d.io.lines, ["AUTH_SOURCE=ANTHROPIC_API_KEY"]);
+  assert.deepEqual(d.io.lines, authOutput());
   const o = client.calls[0].options;
   assert.equal(o.maxTurns, 1);
   assert.equal(o.maxBudgetUsd, 1);
-  assert.deepEqual(o.extraArgs, { bare: null });
+  assert.equal("extraArgs" in o, false);
+  assert.deepEqual(o.tools, []);
   assert.equal(client.prompts.length, 1);
   assert.match(client.prompts[0].text, /single word/);
   assert.equal(b.calls()[0].spend, 0.25);
@@ -884,7 +1385,7 @@ test("F2. --init-only-with-turn: one fixed prompt, maxTurns 1, bare options, wri
 
 test("G11. --init-only-with-turn has a deadline: a hung call stops at --row-timeout-seconds, exit 3, interrupted, and stays at its reservation", async () => {
   const b = box();
-  const { r, client } = await run(b, withTurnArgv(b, { more: ["--row-timeout-seconds", "0.05"] }), [{ messages: [init()], hang: true }]);
+  const { r, client } = await run(b, withTurnArgv(b, { more: ["--row-timeout-seconds", "0.05"] }), [{ messages: [initForm()], hang: true }]);
   assert.equal(r.exitCode, 3);
   assert.equal(client.interrupted, 1);
   near(b.charged(), WORST_HAIKU);
@@ -905,22 +1406,26 @@ test("F2. --init-only-with-turn reads the record: it refuses when the worst case
   assert.equal(c.calls()[0].spend, 0);
   assert.deepEqual(g.d.io.lines, []);
   const n = box();
-  const none = await run(n, withTurnArgv(n), [[init(), { type: "result", subtype: "success" }]]);
+  const none = await run(n, withTurnArgv(n), [[initForm(), { type: "result", subtype: "success" }]]);
   assert.equal(none.r.exitCode, 3);
   near(n.calls()[0].spend, WORST_HAIKU);
 });
 
-// ---------------------------------------------------------------- bare, home, settings
+// ---------------------------------------------------------------- mode, home, settings
 
-test("F10. --bare is on for every row; confirmation is stated as not shown, printed and in summary.json", async () => {
-  assert.equal(BARE_CONFIRMATION, "not shown");
+test("mode. no row passes the bare option; summary.json says not bare and has no confirmation field; stdout has no confirmation line; the dry line is exact", async () => {
   for (const [row, script] of [["T2", [T2_OK()]], ["T4", T4_OK()], ["ISSUE2", [ISSUE2_OK()]]]) {
     const b = box();
     const { client, d } = await run(b, b.argv(row), script);
-    for (const c of client.calls) assert.deepEqual(c.options.extraArgs, { bare: null }, row);
-    assert.ok(d.io.lines.includes("bare confirmed: not shown"));
-    assert.equal(b.summary().bareConfirmed, "not shown");
+    for (const c of client.calls) assert.equal("extraArgs" in c.options, false, row);
+    assert.ok(!d.io.lines.some((l) => /bare/i.test(l)), row);
+    assert.equal(b.summary().mode, "not bare");
+    assert.equal("bareConfirmed" in b.summary(), false);
   }
+  const b = box();
+  const dry = b.deps();
+  assert.equal((await main({ argv: ["--dry-run", "--row", "T2"], env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:9" }, ...dry })).exitCode, 0);
+  assert.ok(dry.io.lines.includes("mode: not bare"));
 });
 
 test("F10. a settings file with hooks, a key helper, any env key, any allow rule, a default mode or a cache setting refuses before any call, exit 2", async () => {
@@ -950,6 +1455,68 @@ test("F10. a settings file with hooks, a key helper, any env key, any allow rule
       assert.equal(client.calls.length, 0);
       assert.ok(d.io.errors.some((l) => /settings file/.test(l)), JSON.stringify(extra));
     }
+  }
+});
+
+const SETTINGS_SECRET = "value-that-must-not-print";
+const OFF_LIST = [
+  ["permissions.additionalDirectories", (s) => ({ ...s, permissions: { ...s.permissions, additionalDirectories: [SETTINGS_SECRET] } })],
+  ["permissions.ask", (s) => ({ ...s, permissions: { ...s.permissions, ask: [SETTINGS_SECRET] } })],
+  ["enabledPlugins", (s) => ({ ...s, enabledPlugins: { [SETTINGS_SECRET]: true } })],
+  ["extraKnownMarketplaces", (s) => ({ ...s, extraKnownMarketplaces: { x: SETTINGS_SECRET } })],
+  ["statusLine", (s) => ({ ...s, statusLine: { command: SETTINGS_SECRET } })],
+  ["otelHeadersHelper", (s) => ({ ...s, otelHeadersHelper: SETTINGS_SECRET })],
+  ["awsAuthRefresh", (s) => ({ ...s, awsAuthRefresh: SETTINGS_SECRET })],
+  ["autoMemoryEnabled", (s) => ({ ...s, autoMemoryEnabled: SETTINGS_SECRET })],
+  ["model", (s) => ({ ...s, model: SETTINGS_SECRET })],
+];
+
+test("settings allowlist. any other key refuses, exit 2 with no client call, naming the key and never its value, on rows and both init forms", async () => {
+  for (const [key, widen] of OFF_LIST) {
+    for (const [form, argv] of [["row", (b) => b.argv("T2")], ["init-only", (b) => b.initArgv()], ["with-turn", (b) => withTurnArgv(b)]]) {
+      const b = box({ settings: widen(goodSettings()) });
+      const { r, client, d } = await run(b, argv(b), [T2_OK()]);
+      assert.equal(r.exitCode, 2, `${form} ${key}`);
+      assert.equal(client.calls.length, 0, `${form} ${key}`);
+      assert.ok(d.io.errors.some((l) => l.includes(`the settings file may carry only deny rules: it contains ${key}; refusing`)), `${form} ${key}`);
+      assert.ok(!d.io.errors.join(" ").includes(SETTINGS_SECRET), `${form} ${key}`);
+    }
+  }
+});
+
+test("settings allowlist. the three allowed top-level keys pass; fastMode true and a file that is no object still refuse", async () => {
+  for (const settings of [{ ...goodSettings(), fastMode: false }, { $schema: "https://example.test/s.json", ...goodSettings(), fastMode: false }]) {
+    const b = box({ settings });
+    const { r, client } = await run(b, b.argv("T2"), [T2_OK()]);
+    assert.equal(r.exitCode, 0, JSON.stringify(settings));
+    assert.equal(client.calls.length, 1);
+  }
+  const on = box({ settings: { ...goodSettings(), fastMode: true } });
+  const fast = await run(on, on.argv("T2"), [T2_OK()]);
+  assert.equal(fast.r.exitCode, 2);
+  assert.equal(fast.client.calls.length, 0);
+  const lifted = (b) => { nodefs.writeFileSync(b.p("ov.json"), JSON.stringify({ reason: "x", expires: "2026-11-05T01:00:00Z", lifts: ["settings_deny"] })); return b.argv("T2", {}, ["--override", b.p("ov.json")]); };
+  for (const settings of [[], [1], 5, null, { permissions: [] }, { permissions: "x" }]) {
+    const b = box({ settings: JSON.stringify(settings) }); // the lift gets these past the deny check, so this one is what stops them
+    const { r, client, d } = await run(b, lifted(b), [T2_OK()]);
+    assert.equal(r.exitCode, 2, JSON.stringify(settings));
+    assert.equal(client.calls.length, 0, JSON.stringify(settings));
+    assert.ok(d.io.errors.some((l) => /may carry only deny rules/.test(l)), JSON.stringify(settings));
+  }
+});
+
+test("settings allowlist. the settings_deny lift waives only the required deny rules: it never reaches the allowlist, and neither does any other lift", async () => {
+  const ov = (b, lifts) => { nodefs.writeFileSync(b.p("ov.json"), JSON.stringify({ reason: "x", expires: "2026-11-05T01:00:00Z", lifts })); return ["--override", b.p("ov.json")]; };
+  const waived = box({ settings: { permissions: { deny: [] } } });
+  assert.equal((await run(waived, waived.argv("T2", {}, ov(waived, ["settings_deny"])), [T2_OK()])).r.exitCode, 0); // this much it lifts
+  const notWaived = box({ settings: { permissions: { deny: [] } } });
+  assert.equal((await run(notWaived, notWaived.argv("T2"), [T2_OK()])).r.exitCode, 2);
+  for (const [key, widen] of OFF_LIST) {
+    const b = box({ settings: widen(goodSettings()) });
+    const { r, client, d } = await run(b, b.argv("T2", {}, ov(b, ["settings_deny", "init_scan", "tool_use_scan"])), [T2_OK()]);
+    assert.equal(r.exitCode, 2, key);
+    assert.equal(client.calls.length, 0, key);
+    assert.ok(d.io.errors.some((l) => l.includes(`it contains ${key}`)), key);
   }
 });
 
@@ -993,9 +1560,9 @@ test("T2 and Skill. options name the plugin's skill on rows and both init forms,
     for (const { options } of client.calls) assert.deepEqual(options.skills, ["quadron:quadron"], label);
   };
   const a = box();
-  check((await run(a, a.initArgv(), [[init()]])).client, "init-only");
+  check((await run(a, a.initArgv(), [[initForm()]])).client, "init-only");
   const c = box();
-  check((await run(c, c.initArgv(["--init-only-with-turn", "--model", HAIKU, "--ledger", c.ledger, "--max-session-usd", "1", "--max-run-usd", "2"]), [[init(), result(0.01, { result: "ok" })]])).client, "with-turn");
+  check((await run(c, c.initArgv(["--init-only-with-turn", "--model", HAIKU, "--ledger", c.ledger, "--max-session-usd", "1", "--max-run-usd", "2"]), [[initForm(), result(0.01, { result: "ok" })]])).client, "with-turn");
   for (const [row, script] of [["T2", [T2_OK()]], ["T4", T4_OK()], ["T5", T5_OK()], ["ISSUE2", [ISSUE2_OK()]]]) {
     const b = box();
     const { client } = await run(b, b.argv(row), script);
@@ -1078,9 +1645,9 @@ test("F9. dontAsk on rows and both init forms, with no callback and no prompt se
     }
   };
   const a = box();
-  check((await run(a, a.initArgv(), [[init()]])).client, "init-only");
+  check((await run(a, a.initArgv(), [[initForm()]])).client, "init-only");
   const c = box();
-  const withTurn = await run(c, c.initArgv(["--init-only-with-turn", "--model", HAIKU, "--ledger", c.ledger, "--max-session-usd", "1", "--max-run-usd", "2"]), [[init(), result(0.01, { result: "ok" })]]);
+  const withTurn = await run(c, c.initArgv(["--init-only-with-turn", "--model", HAIKU, "--ledger", c.ledger, "--max-session-usd", "1", "--max-run-usd", "2"]), [[initForm(), result(0.01, { result: "ok" })]]);
   assert.equal(withTurn.r.exitCode, 0);
   check(withTurn.client, "init-only-with-turn");
   assert.deepEqual(withTurn.client.calls[0].options.allowedTools, []);
@@ -1110,7 +1677,7 @@ test("F11. the child's home variables point at a new empty directory outside the
 test("H2. every live form's child env sets the output limit and the retry and traffic switches, and a parent environment cannot loosen them", async () => {
   const loose = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000", CLAUDE_CODE_MAX_RETRIES: "10", CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES: "5", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "0" };
   const expected = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "4096", CLAUDE_CODE_MAX_RETRIES: "1", CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES: "0", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
-  const forms = [["row", (b) => b.argv("T2"), [T2_OK()]], ["init", (b) => b.initArgv(), [[init()]]], ["turn", (b) => withTurnArgv(b), [[init(), result(0.1)]]]];
+  const forms = [["row", (b) => b.argv("T2"), [T2_OK()]], ["init", (b) => b.initArgv(), [[initForm()]]], ["turn", (b) => withTurnArgv(b), [[initForm(), result(0.1)]]]];
   for (const [name, argv, script] of forms) {
     const b = box();
     const { client } = await run(b, argv(b), script, {}, liveEnv(loose));
@@ -1119,9 +1686,39 @@ test("H2. every live form's child env sets the output limit and the retry and tr
   assert.throws(() => buildChildEnv({}, { configDir: "c", homeDir: "/h" }), /output token limit/);
 });
 
+const FIXED_ENV = ["CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "CLAUDE_CODE_DISABLE_AGENT_VIEW", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"];
+
+test("env. every live form sets the fixed switches to 1 whatever the parent says; none is a refused name; the allowlist is the only way in", async () => {
+  const parent = Object.fromEntries(FIXED_ENV.map((k) => [k, "0"]));
+  const forms = [["row", (b) => b.argv("T2"), [T2_OK()]], ["init", (b) => b.initArgv(), [[initForm()]]], ["turn", (b) => withTurnArgv(b), [[initForm(), result(0.1)]]]];
+  for (const [name, argv, script] of forms) {
+    const b = box();
+    const { r, client } = await run(b, argv(b), script, {}, liveEnv(parent));
+    assert.equal(r.exitCode, 0, name);
+    for (const k of FIXED_ENV) assert.equal(client.calls[0].options.env[k], "1", `${name} ${k}`);
+    for (const k of Object.keys(client.calls[0].options.env)) assert.ok(k in ENV_ALLOWLIST, `${name} ${k}`);
+  }
+  for (const k of FIXED_ENV) {
+    assert.ok(k in ENV_ALLOWLIST, k);
+    assert.ok(!REFUSED_ENV.includes(k), k);
+  }
+});
+
+test("env. APPDATA and LOCALAPPDATA are not passed", async () => {
+  const parent = { APPDATA: "C:\\real\\Roaming", LOCALAPPDATA: "C:\\real\\Local" };
+  const built = buildChildEnv(parent, { configDir: "c", homeDir: "/h", maxOutputTokens: 4096 });
+  for (const k of Object.keys(parent)) {
+    assert.ok(!(k in ENV_ALLOWLIST), k);
+    assert.ok(!(k in built), k);
+  }
+  const b = box();
+  const { client } = await run(b, b.argv("T2"), [T2_OK()], {}, liveEnv(parent));
+  for (const k of Object.keys(parent)) assert.ok(!(k in client.calls[0].options.env), k);
+});
+
 test("cache. every live form's child env pins 5-minute cache writes: a parent cannot loosen it, and the 1-hour switches and TTL variables are dropped, not refused", async () => {
   const parent = { ENABLE_PROMPT_CACHING_1H: "1", CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: "1h", FORCE_PROMPT_CACHING_5M: "0" };
-  const forms = [["row", (b) => b.argv("T2"), [T2_OK()]], ["init", (b) => b.initArgv(), [[init()]]], ["turn", (b) => withTurnArgv(b), [[init(), result(0.1)]]]];
+  const forms = [["row", (b) => b.argv("T2"), [T2_OK()]], ["init", (b) => b.initArgv(), [[initForm()]]], ["turn", (b) => withTurnArgv(b), [[initForm(), result(0.1)]]]];
   for (const [name, argv, script] of forms) {
     const b = box();
     const { r, client } = await run(b, argv(b), script, {}, liveEnv(parent));
@@ -1148,7 +1745,7 @@ test("cache. the 1-hour write count from a result's modelUsage goes to summary.j
   await run(zero, zero.argv("T2"), [[init({ mcp_servers: [] }), SKILL(), result(0.1, { result: "x", ...usage("claude-opus-5-5", 0) })]]);
   assert.equal(zero.calls()[0].cacheWrite1hTokens, 0);
   const turn = box();
-  await run(turn, withTurnArgv(turn), [[init(), result(0.1, usage("claude-haiku-5-5", 5))]]);
+  await run(turn, withTurnArgv(turn), [[initForm(), result(0.1, usage("claude-haiku-5-5", 5))]]);
   assert.equal(turn.calls()[0].cacheWrite1hTokens, 5);
 });
 
@@ -1493,7 +2090,7 @@ test("F21. hygiene: a credential- or token-named file in the config or home dire
     assert.ok(d.io.lines.some((l) => /hygiene failure/.test(l)));
   }
   const i = box();
-  const out = await run(i, i.initArgv(), [(args) => { nodefs.writeFileSync(path.join(args.options.env.HOME, "token.txt"), "x"); return [init()]; }]);
+  const out = await run(i, i.initArgv(), [(args) => { nodefs.writeFileSync(path.join(args.options.env.HOME, "token.txt"), "x"); return [initForm()]; }]);
   assert.equal(out.r.exitCode, 1);
   assert.deepEqual(out.d.io.lines, []);
   assert.match(out.d.io.errors.join(" "), /hygiene failure/);
