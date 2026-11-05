@@ -6,7 +6,7 @@ import path from "node:path";
 import { main } from "../lib/main.mjs";
 import { CAMPAIGN_CEILING_USD, DEFAULT_CONTEXT_TOKENS, MAX_OUTPUT_TOKENS, MODEL_RATES, worstCase } from "../lib/spend.mjs";
 import {
-  box, fakeClient, liveEnv, init, result, assistantText, toolUse, toolResult, T2_OK, T4_OK, T5_OK, ISSUE2_OK, OPUS, HAIKU, OFFER, READ, WORST_OPUS, WORST_HAIKU, reserveLine, settleLine, spent, callEntry, WORKSPACE, CAMPAIGN, rowEntry,
+  box, fakeClient, liveEnv, init, initForm, result, assistantText, toolUse, toolResult, T2_OK, T4_OK, T5_OK, ISSUE2_OK, OPUS, HAIKU, OFFER, READ, WORST_OPUS, WORST_HAIKU, reserveLine, settleLine, spent, callEntry, WORKSPACE, CAMPAIGN, rowEntry,
 } from "./helpers.mjs";
 
 const run = (b, argv, scripts, over = {}, env = liveEnv()) => {
@@ -417,7 +417,7 @@ const withTurn = (b, { session = "1", run: runUsd = "10", extra = [] } = {}) => 
 
 test("H1. init with a turn: reserved and settled on the record, refused when its worst case passes the line, needing the same variables", async () => {
   const b = box();
-  const ok = await run(b, withTurn(b), [[init(), result(0.25)]]);
+  const ok = await run(b, withTurn(b), [[initForm(), result(0.25)]]);
   assert.equal(ok.r.exitCode, 0);
   near(b.charged(), 0.25);
   assert.equal(b.recordLines().find((l) => l.type === "reserve").row, "INIT");
@@ -428,7 +428,7 @@ test("H1. init with a turn: reserved and settled on the record, refused when its
   assert.equal(no.client.calls.length, 0);
   assert.match(errors(no), /total ceiling/);
   const fits = box({ record: spent("earlier", 3.9) });
-  assert.equal((await run(fits, withTurn(fits), [[init(), result(0.25)]])).r.exitCode, 0);
+  assert.equal((await run(fits, withTurn(fits), [[initForm(), result(0.25)]])).r.exitCode, 0);
   assert.equal((await main({ argv: withTurn(b), env: liveEnv(), client: fakeClient([]), ...b.deps() })).exitCode, 2);
 });
 
@@ -438,18 +438,18 @@ test("H1. init with a turn: a kill-shaped reservation stays charged; no reported
   assert.equal(out.r.exitCode, 2);
   assert.equal(out.client.calls.length, 0);
   const n = box();
-  const none = await run(n, withTurn(n), [[init(), { type: "result", subtype: "success" }]]);
+  const none = await run(n, withTurn(n), [[initForm(), { type: "result", subtype: "success" }]]);
   assert.equal(none.r.exitCode, 3);
   near(n.charged(), WORST_HAIKU);
   const z = box();
-  const zero = await run(z, withTurn(z), [[init(), result(0)]]);
+  const zero = await run(z, withTurn(z), [[initForm(), result(0)]]);
   assert.equal(zero.r.exitCode, 3);
   near(z.charged(), WORST_HAIKU);
 });
 
 test("H1. plain init-only needs the record and validates it, and writes nothing to it", async () => {
   const b = box();
-  const ok = await run(b, b.initArgv(), [[init()]]);
+  const ok = await run(b, b.initArgv(), [[initForm()]]);
   assert.equal(ok.r.exitCode, 0);
   assert.equal(nodefs.readFileSync(b.record, "utf8"), "");
   assert.equal(nodefs.existsSync(`${b.record}.lock`), false);

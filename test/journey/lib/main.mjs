@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 
 import {
-  EXIT, Refusal, KEY_VAR, assertOutsideClone, checkAuthEnv, refusePrintMode, checkFastModeSettings, checkSettingsBare,
+  EXIT, Refusal, KEY_VAR, assertOutsideClone, checkAuthEnv, refusePrintMode, checkFastModeSettings, checkSettingsDenyOnly,
   checkSettingsDeny, checkBrowserLibraries, checkBrowserArgsEnv, checkInstalledSdk, loadOverride, checkConfigDir, isLoopbackUrl,
 } from "./guards.mjs";
 import { AuthError } from "./connector.mjs";
@@ -109,7 +109,7 @@ function dryReport(f, io, explicit, red) {
     const w = worstCase({ model: f.model, sessionUsd: num(f["max-session-usd"]), maxOutputTokens: f["max-output-tokens"] ? Number(f["max-output-tokens"]) : MAX_OUTPUT_TOKENS });
     out(`one call's worst case (USD): ${w.reservationUsd.toFixed(5)} (session ${w.sessionUsd} + one more response ${w.responseUsd.toFixed(5)})`);
   }
-  out("mode: bare (how to enable it is unmeasured until the first keyed run)");
+  out("mode: not bare");
   const rows = f.row ? [f.row] : ROW_NAMES;
   for (const r of rows) {
     const d = ROWS[r];
@@ -230,7 +230,7 @@ async function runLive(ctx) {
   try { settings = JSON.parse(fs.readFileSync(f.settings, "utf8")); } catch { throw new Refusal("settings file missing or not valid JSON"); }
   checkSettingsDeny(settings, lifts);
   checkFastModeSettings(settings);
-  checkSettingsBare(settings);
+  checkSettingsDenyOnly(settings);
   checkConfigDir(f["config-dir"], fs);
   checkSessionOptions(ctx);
 

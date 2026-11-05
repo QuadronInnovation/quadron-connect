@@ -19,12 +19,12 @@
 //     there interrupts the call, charged at its reservation, before any output is accepted.
 // reloadPlugins() is not used: its error_count has no comment saying what it counts.
 
-import { EXIT, assertBareDontAsk, fastModeOn, fastModeStatedOff, scanInitTools, versionAtLeast } from "./guards.mjs";
+import { EXIT, assertSessionOptions, fastModeOn, fastModeStatedOff, scanInitTools, toleratedInitTools, unexpectedInitTools, versionAtLeast } from "./guards.mjs";
 import { SERVER_NAME } from "./rows.mjs";
 
 // The one place any path starts a query.
 export function openQuery(client, args) {
-  assertBareDontAsk(args.options);
+  assertSessionOptions(args.options);
   return client.query(args);
 }
 
@@ -65,7 +65,7 @@ export function initExitCode(gate) {
 // Auth source, version and fast mode, from whichever record carries them.
 function checkCore({ apiKeySource, claude_code_version, fast_mode_state }, { expectNoKey }) {
   if (!expectNoKey && apiKeySource !== KEY_SOURCE) return stopGate(EXIT.AUTH, `apiKeySource is not ${KEY_SOURCE}`);
-  if (!versionAtLeast(claude_code_version)) return stopGate(EXIT.STOPPED, "claude_code_version is below the bare-limits floor or absent");
+  if (!versionAtLeast(claude_code_version)) return stopGate(EXIT.STOPPED, "claude_code_version is below the version floor or absent");
   if (fastModeOn({ fast_mode_state })) return stopGate(EXIT.REFUSAL, "fast mode is not off");
   return null;
 }
@@ -89,8 +89,21 @@ function checkConnectorStatus(status) {
   return stopGate(EXIT.STOPPED, "quadron server not connected");
 }
 
+// The init tool list against the turn's `tools`. A tool beyond them means the session is not the one
+// asked for, and a turn that lists Skill cannot run without it: both are load failures, no result about
+// the product. ToolSearch is not required, and connector names are recorded in the summary, not required.
+// The tolerated names (see toleratedInitTools) pass, and a row's summary records them.
+function checkTurnTools(listed, def, lifts) {
+  const tools = def.tools ?? [];
+  const extra = unexpectedInitTools(listed, tools, lifts, toleratedInitTools(listed, def));
+  if (extra.length) return loadFailureGate(stopGate(EXIT.STOPPED, `init lists tools outside this turn's set: ${extra.join(", ")}`));
+  if (tools.includes("Skill") && !(listed ?? []).includes("Skill")) return loadFailureGate(stopGate(EXIT.STOPPED, "init does not list Skill, which this turn needs"));
+  return null;
+}
+
 // First-row gate. `ev` is {source, plugins, pluginErrors, mcpServers, tools, model}. `def.model`,
-// when set, is the requested model: only an init message reports one.
+// when set, is the requested model: only an init message reports one. `def.tools` is the turn's
+// `tools` option; with none stated, every built-in name in init counts as unexpected.
 export function checkSession(ev, def, lifts = []) {
   if ((ev.pluginErrors ?? 0) > 0) return stopGate(EXIT.STOPPED, `plugin_errors is not empty (from ${ev.source})`);
   if (!ev.plugins?.some((p) => p.name === PLUGIN_NAME)) return stopGate(EXIT.STOPPED, "plugin not loaded");
@@ -101,7 +114,7 @@ export function checkSession(ev, def, lifts = []) {
   }
   const bad = scanInitTools(ev.tools, lifts);
   if (bad.length) return { kind: "row", message: `init lists forbidden tools: ${bad.join(", ")}` };
-  return null;
+  return checkTurnTools(ev.tools, def, lifts);
 }
 
 export function fromInitMessage(m) {
@@ -120,21 +133,31 @@ export const messageLabel = (m) => [m?.type, m?.subtype].filter(Boolean).map((v)
 // `stopOn` answering "drain" keeps reading for the result an interrupt should bring: what follows
 // goes to the evidence and is not accepted into `messages`. `order` holds the message labels up to
 // and including the first init, with a marker where the prompt went out.
-export function startPump(q, { onMessage = () => {}, stopOn = () => false } = {}) {
+//
+// A system message that is not init, ahead of init, is passed over: stopOn never sees it and it stays
+// out of `messages`, because collect() reads permission_denied and hook_response messages from there
+// and a message ahead of the load check accepts no output. Row forms pass `onMessage`, so it reaches
+// the evidence and `order`. Init forms pass none, and it is recorded nowhere.
+export function startPump(q, { onMessage, stopOn = () => false } = {}) {
   const initSeen = deferred();
   const state = { messages: [], init: null, inits: [], error: null, ended: null, finished: false, initSeen: initSeen.promise, order: [], draining: false, drained: null };
   const run = async () => {
     if (!q?.[Symbol.asyncIterator]) { state.finished = true; return; }
     try {
       for await (const m of q) {
-        onMessage(m);
+        onMessage?.(m);
         if (state.draining) {
           if (m.type === "result") { state.drained = m; break; }
           continue;
         }
-        state.messages.push(m);
         const isInit = m.type === "system" && m.subtype === "init";
-        if (!state.init && state.order.length < ORDER_LIMIT) state.order.push(messageLabel(m));
+        if (!state.init && !isInit && m.type === "system") {
+          if (onMessage && state.order.length < ORDER_LIMIT - 1) state.order.push(messageLabel(m)); // room stays for init
+          continue;
+        }
+        state.messages.push(m);
+        // Init is always written: the marker where the prompt went out can take the room kept above.
+        if (!state.init && (isInit || state.order.length < ORDER_LIMIT)) state.order.push(messageLabel(m));
         if (isInit) state.inits.push(m);
         if (isInit && !state.init) { state.init = m; initSeen.resolve(m); }
         const stop = stopOn(m, isInit);
@@ -228,14 +251,25 @@ async function connectorCheck(q, timeoutMs) {
   return { gate: loadFailureGate(gate), record };
 }
 
-// Returns {gate, initRecord, loadCheckPending}: gate null means every check that can run before the
-// prompt passed and the prompt may go; loadCheckPending means no init message has been seen yet.
+// Two account fields for the init forms' stdout, named in AccountInfo on the TypeScript docs page
+// (code.claude.com/docs/en/agent-sdk/typescript, "Other Types"). They are picked by name so no other
+// account field, email and organization among them, can reach stdout or the evidence. They stay out of
+// initRecord, which goes into a row's summary. A value is a label only: one line, nothing else in it.
+const NOT_SHOWN = "not shown";
+const accountLabel = (v) => (typeof v === "string" && v ? v.replace(/[^\w.-]/g, "_").slice(0, 40) : NOT_SHOWN);
+const shownAccount = (account) => ({ tokenSource: accountLabel(account?.tokenSource), subscriptionType: accountLabel(account?.subscriptionType) });
+export const authLines = (authSource, shown) => [`AUTH_SOURCE=${authSource}`, `TOKEN_SOURCE=${shown.tokenSource}`, `SUBSCRIPTION_TYPE=${shown.subscriptionType}`];
+
+// Returns {gate, initRecord, accountShown, loadCheckPending}: gate null means every check that can run
+// before the prompt passed and the prompt may go; loadCheckPending means no init message has been seen yet.
 export async function runGates({ q, pump, def, lifts = [], timeoutMs = DEFAULT_INIT_TIMEOUT_MS, expectNoKey = false }) {
   const initRecord = { authSource: null, version: null, plugins: null, servers: null, fastState: null, gateSource: null };
-  const done = (gate) => ({ gate, initRecord });
+  let accountShown = shownAccount(null);
+  const done = (gate) => ({ gate, initRecord, accountShown });
   try {
     if (typeof q?.initializationResult !== "function") return done(stopGate(EXIT.STOPPED, "no init result"));
     const r = await withTimeout(q.initializationResult(), timeoutMs);
+    accountShown = shownAccount(r?.account);
     initRecord.authSource = r?.account?.apiKeySource ?? null;
     initRecord.version = r?.claude_code_version ?? null;
     initRecord.fastState = r?.fast_mode_state ?? "not shown";
@@ -248,7 +282,8 @@ export async function runGates({ q, pump, def, lifts = [], timeoutMs = DEFAULT_I
     }
     await waitForEarlyInit(pump, timeoutMs);
     if (pump.error) throw pump.error;
-    // Anything ahead of init stops here, whether or not an init message followed it.
+    // The pump passed over any system message ahead of init. Anything else ahead of it stops here,
+    // whether or not an init message followed it.
     const lead = pump.messages[0];
     if (lead && !(lead.type === "system" && lead.subtype === "init")) return done(loadFailureGate(stopGate(EXIT.STOPPED, nonInitFirstMessage(lead))));
     if (!pump.init) {
@@ -275,9 +310,10 @@ export async function runGates({ q, pump, def, lifts = [], timeoutMs = DEFAULT_I
 
 // The load check failed: not a product result. Auth keeps its own code; everything else stops the run.
 export function loadFailureGate(gate) {
+  if (gate.loadFailure) return gate;
   return { ...gate, kind: "stop", code: gate.code === EXIT.AUTH ? EXIT.AUTH : EXIT.STOPPED, loadFailure: true, message: `load failure: ${gate.message}` };
 }
-export const nonInitFirstMessage = (m) => `the stream's first message was ${messageLabel(m)}, not init. Init follows only plugin_install events (CLAUDE_CODE_SYNC_PLUGIN_INSTALL, which is not in the child's allowlist) or hook events, and bare should fire no hooks, so a hook event here is evidence bare did not take`;
+export const nonInitFirstMessage = (m) => `the stream's first message apart from system messages was ${messageLabel(m)}, not init`;
 
 export function closeQuery(q) {
   try { q?.close?.(); } catch { /* closing only */ }
