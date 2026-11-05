@@ -528,7 +528,8 @@ test("T2 skill name. the printed line ends with one label per Skill call, on a p
   for (const [inputs, verdict, names] of [
     [[{ skill: "quadron:quadron", args: "x" }], "PASS", "quadron:quadron"],
     [[{ name: "quadron:quadron" }], "PASS", "quadron:quadron"],
-    [[{ skill: "other:skill", args: "quadron:quadron" }], "PASS", "other:skill"], // the rule looks at every value; the label at `skill`
+    [[{ skill: "other:skill", args: "quadron:quadron" }], "FAIL", "other:skill"], // the rule and the label read input.skill or input.name only
+    [[{ a: { b: ["quadron:quadron"] } }], "FAIL", "no skill name"],
     [[{ skill: "quadron:quadron" }, { skill: "other:skill" }], "FAIL", "quadron:quadron, other:skill"],
     [[{ skill: "quadron" }], "FAIL", "quadron"],
     [[{ n: 1 }], "FAIL", "no skill name"],
