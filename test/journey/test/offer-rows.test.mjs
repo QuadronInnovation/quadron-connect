@@ -8,7 +8,7 @@ import { LIFTABLE, assertSessionOptions, loadOverride } from "../lib/guards.mjs"
 import { checkSession } from "../lib/gates.mjs";
 import { ROWS, ROW_NAMES, turnTools } from "../lib/rows.mjs";
 import { checkAttempts, opusPassedAtHead, t6Prerequisite } from "../lib/spend.mjs";
-import { OFFER_HEURISTIC_NOTE, T4_NARROW_NOTE, VERDICTS, collect, isOffer, readOffer, turnGate, turnNote, verdictIssue2, verdictT4 } from "../lib/verdicts.mjs";
+import { OFFER_HEURISTIC_NOTE, VERDICTS, collect, isOffer, readOffer, turnGate, verdictIssue2, verdictT4 } from "../lib/verdicts.mjs";
 import {
   box, fakeClient, liveEnv, init, initC, result, toolUse, toolResult, assistantText, denial, permissionDenied, rowEntry,
   HAIKU, HEAD, JID, OPUS, WORDING, CAPTURE, OFFER, OFFER_N, OFFER_ROW, READ, SKILL, T4_OK, ISSUE2_OK,
@@ -33,37 +33,34 @@ const DRY_ENV = { ANTHROPIC_BASE_URL: "http://127.0.0.1:9" };
 
 const MULTI_LINE = "Project: quadron-connect\nDecision: the plugin ships recall only\n\nWant me to save this?";
 
-test("project name. T4's turn 1: the name anywhere in the turn's assistant text opens the gate, and no name there closes it", () => {
+const T4_NOT_NAMED = /turn 1's offer does not name the project \("quadron-connect"\) in its sentence or the one before or after it/;
+
+test("project name. T4's gate: the name in the offer's sentence, the one before or the one after opens it; two away or nowhere closes it", () => {
   for (const text of [
     OFFER,
     "For quadron-connect, it ships recall only. Want me to keep that?",
+    "This is for quadron-connect. Want me to keep recall only?",
     "It ships recall only. Want me to keep that? It would go in quadron-connect.",
     "Want me to keep recall only in QUADRON-CONNECT?",
-    "This is about quadron-connect. Understood. It ships recall only. Want me to keep that?",
-    "Want me to keep recall only? Understood. Nothing else changes. It is about quadron-connect.",
-    MULTI_LINE,
   ]) assert.equal(turnGate("T4", said(text)), null, text);
+  for (const text of [
+    "This is about quadron-connect. Understood. Want me to keep recall only?",
+    "Want me to keep recall only? Understood. It would go in quadron-connect.",
+    "Want me to keep it: the plugin ships recall only?",
+    MULTI_LINE,
+  ]) assert.match(turnGate("T4", said(text)), T4_NOT_NAMED, text);
   const none = "Want me to keep it: the plugin ships recall only?";
-  assert.match(turnGate("T4", said(none)), /turn 1 does not name the project \("quadron-connect"\) anywhere in its text/);
-  assert.match(turnGate("T4", rec(init(), assistantText(none), ok("Filed under quadron-connect."))), /does not name the project/); // the result is not the assistant text
+  assert.match(turnGate("T4", rec(init(), assistantText(none), ok("Filed under quadron-connect."))), T4_NOT_NAMED); // the result is not the assistant text
 });
 
-test("project name. the narrow check on T4 is a note, only when the offer's own sentences miss the name, and only on T4", () => {
-  assert.equal(turnNote("T4", said(MULTI_LINE)), T4_NARROW_NOTE);
-  assert.match(T4_NARROW_NOTE, /does not name the project \("quadron-connect"\) in its sentence or the one before or after it/);
-  assert.equal(turnNote("T4", said(OFFER)), null);
-  assert.equal(turnNote("T5", said(MULTI_LINE)), null);
-});
-
-test("project name. the multi-line shape passes T4's gate with the note, through both turns, and fails T4O-S", async () => {
-  const [first, second] = T4_OK();
+test("project name. the multi-line shape fails T4's gate, so turn 2 never starts, and fails T4O-S", async () => {
+  const [first] = T4_OK();
   const b = box();
-  const t4 = await run(b, b.argv("T4"), [[first[0], assistantText(MULTI_LINE), result(0.1, { session_id: "s9", result: MULTI_LINE })], second]);
-  assert.equal(t4.client.calls.length, 2);
-  assert.equal(t4.r.exitCode, 0);
-  assert.equal(t4.r.summary.verdict, "PASS");
-  assert.equal(t4.r.summary.notes.filter((n) => n === T4_NARROW_NOTE).length, 1);
-  assert.ok(b.summary().notes.includes(T4_NARROW_NOTE));
+  const t4 = await run(b, b.argv("T4"), [[first[0], assistantText(MULTI_LINE), result(0.1, { session_id: "s9", result: MULTI_LINE })], []]);
+  assert.equal(t4.client.calls.length, 1);
+  assert.equal(t4.r.exitCode, 1);
+  assert.equal(t4.r.summary.verdict, "FAIL");
+  assert.match(t4.r.summary.notes.join(" "), T4_NOT_NAMED);
   const s = box();
   const narrow = await run(s, s.argv("T4O-S"), [OFFER_ROW("T4O-S", { text: MULTI_LINE })]);
   assert.equal(narrow.r.exitCode, 1);
@@ -72,17 +69,20 @@ test("project name. the multi-line shape passes T4's gate with the note, through
   assert.equal(narrow.r.summary.offerSentence, "Want me to save this?");
 });
 
-test("project name. the note reaches T4's summary when turn 2 stops, and a named offer has none", async () => {
+test("project name. through T4: a name two sentences away stops turn 1, and an adjacent one goes on to a pass", async () => {
   const [first, second] = T4_OK();
+  const far = "This is about quadron-connect. Understood. Want me to keep recall only?";
   const b = box();
-  const stopped = await run(b, b.argv("T4"), [[first[0], assistantText(MULTI_LINE), result(0.1, { session_id: "s9", result: MULTI_LINE })], [second[0], result(0.15, { session_id: "s9", subtype: "error_max_budget_usd" })]]);
-  assert.equal(stopped.r.exitCode, 3);
-  assert.equal(stopped.r.summary.partial, true);
-  assert.ok(stopped.r.summary.notes.includes(T4_NARROW_NOTE));
+  const stopped = await run(b, b.argv("T4"), [[first[0], assistantText(far), result(0.1, { session_id: "s9", result: far })], second]);
+  assert.equal(stopped.client.calls.length, 1);
+  assert.equal(stopped.r.exitCode, 1);
+  assert.match(stopped.r.summary.notes.join(" "), T4_NOT_NAMED);
+  const near = "This is for quadron-connect. Want me to keep recall only?";
   const n = box();
-  const named = await run(n, n.argv("T4"), T4_OK());
-  assert.equal(named.r.summary.verdict, "PASS");
-  assert.ok(!named.r.summary.notes.includes(T4_NARROW_NOTE));
+  const went = await run(n, n.argv("T4"), [[first[0], assistantText(near), result(0.1, { session_id: "s9", result: near })], second]);
+  assert.equal(went.client.calls.length, 2);
+  assert.equal(went.r.exitCode, 0);
+  assert.equal(went.r.summary.verdict, "PASS");
 });
 
 test("project name. an offer with no name anywhere fails T4 and T4O-S", async () => {
@@ -91,8 +91,7 @@ test("project name. an offer with no name anywhere fails T4 and T4O-S", async ()
   const t4 = await run(b, b.argv("T4"), [[init({ session_id: "s" }), assistantText(text), result(0.1, { session_id: "s", result: text })], []]);
   assert.equal(t4.client.calls.length, 1);
   assert.equal(t4.r.exitCode, 1);
-  assert.match(t4.r.summary.notes.join(" "), /turn 1 does not name the project/);
-  assert.ok(!t4.r.summary.notes.includes(T4_NARROW_NOTE));
+  assert.match(t4.r.summary.notes.join(" "), T4_NOT_NAMED);
   const s = box();
   const o = await run(s, s.argv("T4O-S"), [OFFER_ROW("T4O-S", { text })]);
   assert.equal(o.r.exitCode, 1);
@@ -133,7 +132,7 @@ test("project name. through T4: an offer without the name fails the row, and tur
   assert.equal(client.calls.length, 1);
   assert.equal(r.exitCode, 1);
   assert.equal(r.summary.verdict, "FAIL");
-  assert.match(r.summary.notes.join(" "), /turn 1 does not name the project/);
+  assert.match(r.summary.notes.join(" "), T4_NOT_NAMED);
 });
 
 test("the T4 row is as it was: both prompts, both caps; T4O-S asks exactly what T4's first turn asks", () => {

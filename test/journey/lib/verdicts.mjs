@@ -124,21 +124,17 @@ export function readOffer(text, phrase, prompt = "") {
 const NOT_NAMED = `does not name the project ("${PROJECT}") in its sentence or the one before or after it`;
 const t4Offer = (s) => readOffer(s.assistant_text, T4_OFFER_PHRASE, ROWS.T4.turns[0].prompt);
 
-// May the next turn of a two-turn row start? Nothing further is spent unless this says so. T4 asks
-// for the project anywhere in the turn's assistant text: an offer that names it two sentences earlier
-// still goes on. The one-turn offer rows hold the narrower rule, and T4 records it: see turnNote.
+// May the next turn of a two-turn row start? Nothing further is spent unless this says so. T4's offer
+// names the project as the one-turn offer rows' must: in its sentence or the one before or after it.
 export function turnGate(row, s) {
   if (!success(s)) return `turn 1 had no success result (${s?.result?.subtype ?? "none"})`;
   if (row !== "T4") return null;
   if (captureAttempted(s)) return "captured before confirmation";
-  if (!t4Offer(s).offered) return `turn 1 made no offer with the stated decision ("${T4_OFFER_PHRASE}")`;
-  if (!hasPhrase(s.assistant_text, PROJECT)) return `turn 1 does not name the project ("${PROJECT}") anywhere in its text`;
+  const offer = t4Offer(s);
+  if (!offer.offered) return `turn 1 made no offer with the stated decision ("${T4_OFFER_PHRASE}")`;
+  if (!offer.named) return `turn 1's offer ${NOT_NAMED}`;
   return null;
 }
-
-// What a turn that passed the gate leaves for the summary, whatever the next turn does. Never a condition.
-export const T4_NARROW_NOTE = `turn 1's offer ${NOT_NAMED}; the project is named elsewhere in the turn's text, so this is recorded and the row went on`;
-export const turnNote = (row, s) => (row === "T4" && !t4Offer(s).named ? T4_NARROW_NOTE : null);
 
 // The observed shape is {"skill","args"} from a tool_use in a Claude Code transcript, not from docs, so `name` is
 // read too. Only those two fields name the skill: the value in `args` or a nested field is never a skill name.

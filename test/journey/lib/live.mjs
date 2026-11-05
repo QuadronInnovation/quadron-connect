@@ -15,7 +15,7 @@ import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./c
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
 import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, pickCaptureTool, turnTools } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
-import { VERDICTS, collect, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate, turnNote } from "./verdicts.mjs";
+import { VERDICTS, collect, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
 import { runGatedCall } from "./call.mjs";
 import { Evidence, newUniqueDir } from "./evidence.mjs";
@@ -454,9 +454,6 @@ async function rowAttempt(ctx, def) {
       if (i + 1 < def.turns.length) {
         const why = turnGate(row, s);
         if (why) { failRow(why); break; }
-        // Here rather than in the verdict, so a stop on the next turn cannot lose it.
-        const passedNote = turnNote(row, s);
-        if (passedNote) summary.notes.push(passedNote);
         // A record only: the next turn needs a capture tool and turn 1's init lists neither, so it goes on with the fallback.
         const listed = streams[0].init?.tools;
         if (def.turns[i + 1].tools.includes(CAPTURE_PLACEHOLDER) && !(Array.isArray(listed) && CAPTURE_TOOLS.some((t) => listed.includes(t)))) {
