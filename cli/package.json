@@ -1,6 +1,6 @@
 {
   "name": "@quadron/connect",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Connect a terminal coding agent to Quadron — recall your own prior judgment at session start, and keep what you decide.",
   "bin": { "quadron-connect": "bin/cli.js" },
   "type": "commonjs",
