@@ -9,6 +9,7 @@
 //   cli.js                         sign in, register the MCP server, install the recall hook
 //   cli.js status                  what is wired, and is the token good
 //   cli.js uninstall               remove exactly what was installed
+//   cli.js config <client>         print the connection settings for another MCP client
 //
 // ★ THERE IS NO CAPTURE HOOK, AND THAT IS DELIBERATE.
 //
@@ -25,6 +26,7 @@ const { execFileSync } = require("child_process");
 
 const auth = require("../lib/auth.js");
 const settings = require("../lib/settings.js");
+const clientConfig = require("../lib/client-config.js");
 
 const HOOK_DIR = path.join(__dirname, "..", "hooks");
 const MCP_URL = auth.MCP_URL;   // resolved once in auth: env > ~/.quadron/config.json > default
@@ -152,6 +154,27 @@ function cmdUninstall() {
   say("");
 }
 
+// Print only: stdout carries the config text and nothing else, so it can be redirected into a
+// file. Usage, targets, warnings and errors all go to stderr.
+function cmdConfig(args) {
+  const client = args.filter((a) => !a.startsWith("-"))[1];
+  if (!clientConfig.CLIENTS.includes(client)) {
+    process.stderr.write("usage: quadron-connect config <cursor, codex or chatgpt>\n");
+    process.exit(2);
+  }
+  let out;
+  try {
+    out = clientConfig.render(client, MCP_URL);
+  } catch (e) {
+    process.stderr.write(`${warn("✗")} ${e.message}\n`);
+    process.exit(1);
+  }
+  if (out.targets.length) process.stderr.write(`targets: ${out.targets.join(", ")}\n`);
+  // The MCP URL, not the issuer: it is the value being printed, and it can be overridden alone.
+  if (MCP_URL !== auth.DEFAULTS.mcpUrl) process.stderr.write(`${warn("!")} non-production endpoints: ${MCP_URL}\n`);
+  process.stdout.write(out.text);
+}
+
 const [, , ...argv] = process.argv;
 const cmd = argv.find((a) => !a.startsWith("-")) || "install";
 
@@ -159,7 +182,8 @@ const cmd = argv.find((a) => !a.startsWith("-")) || "install";
   if (cmd === "status") return cmdStatus();
   if (cmd === "uninstall" || cmd === "remove") return cmdUninstall();
   if (cmd === "install") return cmdInstall();
+  if (cmd === "config") return cmdConfig(argv);
   say(`unknown command: ${cmd}`);
-  say("usage: quadron-connect [install|status|uninstall]");
+  say("usage: quadron-connect [install|status|uninstall|config <client>]");
   process.exit(2);
 })().catch((e) => { say(`\n${warn("✗")} ${e && e.message}`); process.exit(1); });

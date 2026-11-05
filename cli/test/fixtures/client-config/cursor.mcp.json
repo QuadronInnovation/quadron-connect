@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "quadron": {
+      "url": "https://mcp.example.test/mcp"
+    }
+  }
+}
