@@ -45,7 +45,7 @@ Quadron signs in with OAuth. The [authentication docs](https://developers.openai
 
 The recall hook in [`cli/README.md`](../../cli/README.md) is Claude Code only. Quadron ships nothing for ChatGPT, and this page has no hook steps.
 
-- **Web:** no equivalent. The [plugin docs](https://learn.chatgpt.com/docs/plugins) currently say installing a plugin on the web doesn't deploy hook scripts.
+- **Web:** no equivalent on the pages read. The [plugin docs](https://learn.chatgpt.com/docs/plugins) currently say installing a plugin on the web doesn't deploy hook scripts.
 - **Desktop:** the [plugin build docs](https://developers.openai.com/plugins/build/plugins) currently mention lifecycle hooks for plugins installed manually in Codex desktop. Quadron ships no such plugin.
 
 ## Behaviour guidance

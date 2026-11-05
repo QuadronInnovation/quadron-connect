@@ -35,9 +35,10 @@ check(() => assert.doesNotMatch(source, /\brequire\s*\(|\bprocess\b|\bimport\b|\
 // a temp home, and any QUADRON_* in the caller's environment is dropped.
 const CLI_DIR = fileURLToPath(new URL("..", import.meta.url));
 const home = mkdtempSync(join(tmpdir(), "quadron-client-config-"));
+const work = mkdtempSync(join(tmpdir(), "quadron-client-config-cwd-"));
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("QUADRON_")));
-const cli = (args, mcpUrl = BASE) => spawnSync(process.execPath, ["bin/cli.js", ...args], {
-  cwd: CLI_DIR,
+const cli = (args, mcpUrl = BASE) => spawnSync(process.execPath, [join(CLI_DIR, "bin/cli.js"), ...args], {
+  cwd: work,
   encoding: "utf8",
   env: { ...baseEnv, HOME: home, USERPROFILE: home, ...(mcpUrl ? { QUADRON_MCP_URL: mcpUrl } : {}) },
 });
@@ -54,6 +55,9 @@ try {
   check(() => assert.match(cli(["config", "codex"]).stderr, /targets: ~\/\.codex\/config\.toml, \.codex\/config\.toml/));
   // Negative control: on the default URL the warning stays away, so the match above can fail.
   check(() => assert.doesNotMatch(cli(["config", "cursor"], null).stderr, /non-production/));
+  const prod = cli(["config", "cursor"], null);
+  check(() => assert.equal(prod.status, 0, prod.stderr));
+  check(() => assert.equal(JSON.parse(prod.stdout).mcpServers.quadron.url, "https://mcp.quadron.tech/mcp"));
   // Refusals exit nonzero with nothing on stdout, so a redirect cannot fill a config file with an error.
   for (const args of [["config", "windsurf"], ["config"]]) {
     const r = cli(args);
@@ -67,8 +71,10 @@ try {
   check(() => assert.match(badUrl.stderr, /must be HTTPS/));
   // Print only: nothing was written under the home it ran with.
   check(() => assert.deepEqual(readdirSync(home), []));
+  check(() => assert.deepEqual(readdirSync(work), []));
 } finally {
   rmSync(home, { recursive: true, force: true });
+  rmSync(work, { recursive: true, force: true });
 }
 
 console.log(`client-config: ${passed} checks passed`);
