@@ -225,15 +225,16 @@ export function scanInitTools(tools, lifted = []) {
 
 // The only tools outside a turn's `tools` that init may list and pass: not refused, and recorded where a
 // summary exists, which an init form does not have. The three connector names on a connector row, and
-// Skill on an init form. A row with no connector gets none, so T2 stays strict.
+// Skill on an init form or a row with `noPlugin`, which does not ask for it and records it if listed.
+// A row with no connector gets none, so T2 stays strict.
 //
 // Passing here grants nothing, but the two resource tools need no permission
 // (code.claude.com/docs/en/tools-reference), so a row could call them though they are on no allow-list.
 // Such a call is neither refused nor judged: a plain note in the summary names it.
 export const CONNECTOR_INIT_TOOLS = ["ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers"];
 export const MCP_RESOURCE_TOOLS = ["ListMcpResourcesTool", "ReadMcpResourceTool"];
-export function toleratedInitTools(listed, { connector = false, initForm = false } = {}) {
-  const names = [...(connector ? CONNECTOR_INIT_TOOLS : []), ...(initForm ? ["Skill"] : [])];
+export function toleratedInitTools(listed, { connector = false, initForm = false, noPlugin = false } = {}) {
+  const names = [...(connector ? CONNECTOR_INIT_TOOLS : []), ...(initForm || noPlugin ? ["Skill"] : [])];
   return (listed ?? []).filter((t) => names.includes(t));
 }
 

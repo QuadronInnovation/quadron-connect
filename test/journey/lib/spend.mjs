@@ -25,6 +25,7 @@
 import path from "node:path";
 import { EXIT, Refusal } from "./guards.mjs";
 import { recordModelTotal, recordTotal } from "./campaign.mjs";
+import { ROWS } from "./rows.mjs";
 
 const EPS = 1e-9;
 
@@ -191,13 +192,15 @@ export function opusPassedAtHead(data, row, head) {
 }
 
 // Throws a Refusal when this row may not run on this model at this head: the attempt count from the
-// campaign record, and the passes from the ledger, which holds the verdicts.
+// campaign record, and the passes from the ledger, which holds the verdicts. A row's `repeatAfterPass`
+// lets its second Opus attempt run after a pass; it comes from the row's definition alone, and the
+// attempt limit still holds.
 export function checkAttempts(data, state, { row, model, head }) {
   const family = modelFamily(model);
   if (!family) throw new Refusal("model is neither Opus nor Haiku: no attempt limit is defined for it");
   const limit = attemptLimit(row, family), used = attemptsFor(state, row, model, head);
   if (used >= limit) throw new Refusal(`${row} has used ${used} of ${limit} attempt(s) on this model at this head`);
-  if (family === "opus" && opusPassedAtHead(data, row, head)) throw new Refusal(`${row} already passed on Opus at this head`);
+  if (family === "opus" && !ROWS[row]?.repeatAfterPass && opusPassedAtHead(data, row, head)) throw new Refusal(`${row} already passed on Opus at this head`);
   if (family === "haiku" && !opusPassedAtHead(data, row, head)) {
     throw new Refusal(`${row} has no Opus pass at this head; Haiku does not run before it`);
   }

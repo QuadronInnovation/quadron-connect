@@ -6,7 +6,7 @@ import { main } from "../lib/main.mjs";
 import { SpendTracker } from "../lib/spend.mjs";
 import {
   box, fakeClient, liveEnv, init, result, toolUse, toolResult, assistantText, T2_OK, T2_BAD, T4_OK, T5_OK, T6_OK, ISSUE2_OK, OPUS, HAIKU, HEAD, CAPTURE, OFFER, READ, SKILL,
-  WORST_OPUS, WORDING, JID, t6Ready, rowEntry, callEntry, fetchStub, reserveLine, settleLine, denial, permissionDenied,
+  WORST_OPUS, WORDING, JID, t6Ready, rowEntry, callEntry, fetchStub, reserveLine, settleLine, denial, permissionDenied, OFFER_ROW,
 } from "./helpers.mjs";
 
 const run = (b, argv, scripts, over = {}, env = liveEnv()) => {
@@ -463,7 +463,7 @@ test("F6. T4: naming only the project on turn 1 is no offer; a capture call on t
   assert.equal(b.r.exitCode, 1);
   assert.match(b.r.summary.notes.join(" "), /captured before confirmation/);
   const text = box();
-  const c = await run(text, text.argv("T4"), T4_OK().map((s, i) => (i === 0 ? [s[0], assistantText("It ships recall only. Shall I keep that?"), result(0.1, { session_id: "s9", result: "ok" })] : s)));
+  const c = await run(text, text.argv("T4"), T4_OK().map((s, i) => (i === 0 ? [s[0], assistantText("It ships recall only in quadron-connect. Shall I keep that?"), result(0.1, { session_id: "s9", result: "ok" })] : s)));
   assert.equal(c.client.calls.length, 2); // the offer in assistant text counts
   const echo = box();
   const e = await run(echo, echo.argv("T4"), [[init({ session_id: "s" }), result(0.1, { session_id: "s", result: "Noted: the plugin ships recall only." })], []]);
@@ -660,8 +660,8 @@ test("F25. model and effort equality on a two-turn row: both turns carry them, a
 });
 
 test("F25. each row's maxTurns is exact", async () => {
-  const expected = { T2: [7], T4: [5, 5], T5: [5, 5], ISSUE2: [6] };
-  const scripts = { T2: [T2_OK()], T4: T4_OK(), T5: T5_OK(), ISSUE2: [ISSUE2_OK()] };
+  const expected = { T2: [7], T4: [5, 5], T5: [5, 5], ISSUE2: [6], "T4O-S": [5], "T4O-N": [5], "T4O-C": [5] };
+  const scripts = { T2: [T2_OK()], T4: T4_OK(), T5: T5_OK(), ISSUE2: [ISSUE2_OK()], "T4O-S": [OFFER_ROW("T4O-S")], "T4O-N": [OFFER_ROW("T4O-N")], "T4O-C": [OFFER_ROW("T4O-C")] };
   for (const [row, caps] of Object.entries(expected)) {
     const b = box();
     const { client } = await run(b, b.argv(row), scripts[row]);

@@ -39,8 +39,8 @@ const JOURNEY_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const USAGE = `Dry by default (no calls). Live only with --live.
 Run flags (all required unless --dry-run): --model <id> --effort <low|medium|high|xhigh|max>
   --max-session-usd <n> --max-run-usd <n> --expected-account <text>
-  --ledger <path> --row <T2|T4|T5|T6|ISSUE2>   (one row per command; a retry names one row)
-Live also needs: --settings <file> --plugin-dir <dir> --config-dir <empty dir> --out <dir> [--mcp-url <url>]
+  --ledger <path> --row <T2|T4|T5|T6|ISSUE2|T4O-S|T4O-N|T4O-C>   (one row per command; a retry names one row)
+Live also needs: --settings <file> --plugin-dir <dir> (not T4O-C) --config-dir <empty dir> --out <dir> [--mcp-url <url>]
   [--account-label <text>] [--row-timeout-seconds <n>] [--routing-blocked <reason>] [--override <file>]
   [--max-total-usd <n>] (lowers ${CAMPAIGN_CEILING_USD} USD, never raises it) [--max-output-tokens <n>] (lowers ${MAX_OUTPUT_TOKENS}, never raises it)
 Live also needs, from the environment only: QUADRON_CAMPAIGN_RECORD (an existing file outside the clone; empty is a total of zero),
@@ -115,7 +115,10 @@ function dryReport(f, io, explicit, red) {
     const d = ROWS[r];
     if (d.noSession) { out(`would run ${r}: no session; this row is the unit check in ${T3_CHECK}`); continue; }
     const caps = d.turns.map((t) => t.maxTurns).join("/");
-    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session`);
+    const offer = d.offerPhrase ? `; offer phrase "${d.offerPhrase}"` : "";
+    const surface = d.noPlugin ? "; connector only, no plugin or skill" : "";
+    const reading = d.diagnostic ? "; diagnostic: never a pass, exit 0 whichever way the turn goes" : "";
+    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}`);
   }
   out(explicit ? "dry run (explicit)" : "dry run (default: pass --live to run for real)");
 }
@@ -199,7 +202,9 @@ async function runLive(ctx) {
   }
   if (!initMode) requireRunFlags(f);
   if (f.model !== undefined) assertKnownModel(f.model);
-  for (const k of ["settings", "plugin-dir", "config-dir"]) if (!f[k]) throw new Refusal(`--${k} is required for a live run`);
+  // A row was validated above when one runs. An init form asks for the plugin whatever --row says.
+  const needsPlugin = initMode || !ROWS[f.row].noPlugin;
+  for (const k of ["settings", ...(needsPlugin ? ["plugin-dir"] : []), "config-dir"]) if (!f[k]) throw new Refusal(`--${k} is required for a live run`);
   if (!initMode && !f.out) throw new Refusal("--out is required for a live run");
 
   // Environment only, never a flag. Every live form needs it; only the forms that send a prompt charge it.

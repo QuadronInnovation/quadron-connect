@@ -238,6 +238,15 @@ export const T5_OK = (a = 0.05, b = 0.08) => [
 ];
 const ISSUE2_OFFER = "Keep this in quadron-connect: the runner keeps raw streams?";
 export const ISSUE2_OK = (cost = 0.1, sid = "s2") => [init({ session_id: sid }), assistantText(ISSUE2_OFFER), result(cost, { session_id: sid, result: ISSUE2_OFFER })];
+export const OFFER_N = "Want me to keep it in quadron-connect: annual pricing only, with monthly ruled out?";
+export const OFFER_ROW_OFFERS = { "T4O-S": OFFER, "T4O-N": OFFER_N, "T4O-C": OFFER };
+// A connector-only session: no plugin, and no Skill among its built-in tools.
+export const initC = (o = {}) => init({ tools: ["ToolSearch", "mcp__quadron__quad_context", "mcp__quadron__quad_search", "mcp__quadron__quad_recall", "mcp__quadron__future_you_capture"], plugins: [], ...o });
+const offerRowInit = (row, sid) => (row === "T4O-C" ? initC({ session_id: sid }) : init({ session_id: sid }));
+// One offer row's turn, with `extra` ahead of the offer's result.
+export const OFFER_ROW = (row, { text = OFFER_ROW_OFFERS[row], extra = [], cost = 0.1, sid = "o", resultExtra = {} } = {}) => [
+  offerRowInit(row, sid), ...extra, ...(text ? [assistantText(text)] : []), result(cost, { session_id: sid, result: text ?? "An answer.", ...resultExtra }),
+];
 export const READ = "mcp__quadron__quad_context";
 export const T6_OK = (cost = 0.1) => [init({ session_id: "t6" }), toolUse("r1", READ), toolResult("r1", `Judgment: ${WORDING}. Status: confirmed.`), result(cost, { session_id: "t6", result: "From quadron-connect: recall only." })];
 
