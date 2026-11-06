@@ -52,6 +52,12 @@ clear exactly which words it means. "Writing to the record" below says which too
 
 Quadron saves text the person approves. The record is theirs, in their words.
 
+<!-- BEGIN GENERATED: save-routing (scripts/gen-routing.mjs; do not edit) -->
+Save requests go to the Quadron capture tool (`future_you_capture` or `quad_commit`, as the rules below decide), never to built-in memory or files. The Quadron capture tool's description says:
+
+> When the person asks to save or keep a decision, judgment or note about their work, save it with this tool to their Quadron record, not to built-in memory. If they say 'remember' or 'file' without saying where, ask whether they mean Quadron. After saving, tell them Quadron received it for their review.
+<!-- END GENERATED: save-routing -->
+
 - Capture only the person's own decisions, standards, preferences and facts about their
   work, stated by them or confirmed by them in this conversation.
 - A judgment they would stand behind (a decision, a ruled-out alternative, a standard, a
