@@ -19,7 +19,7 @@
 //     there interrupts the call, charged at its reservation, before any output is accepted.
 // reloadPlugins() is not used: its error_count has no comment saying what it counts.
 
-import { EXIT, assertSessionOptions, fastModeOn, fastModeStatedOff, scanInitTools, toleratedInitTools, unexpectedInitTools, versionAtLeast } from "./guards.mjs";
+import { EXIT, OBSERVED_WRITE_TOOLS, assertSessionOptions, fastModeOn, fastModeStatedOff, scanInitTools, toleratedInitTools, unexpectedInitTools, versionAtLeast } from "./guards.mjs";
 import { SERVER_NAME } from "./rows.mjs";
 
 // The one place any path starts a query.
@@ -92,10 +92,11 @@ function checkConnectorStatus(status) {
 // The init tool list against the turn's `tools`. A tool beyond them means the session is not the one
 // asked for, and a turn that lists Skill cannot run without it: both are load failures, no result about
 // the product. ToolSearch is not required, and connector names are recorded in the summary, not required.
-// The tolerated names (see toleratedInitTools) pass, and a row's summary records them.
+// The tolerated names (see toleratedInitTools) pass, and a row's summary records them. On a row with
+// `observeWrites`, Write and Edit pass when the turn's `tools` names them.
 function checkTurnTools(listed, def, lifts) {
   const tools = def.tools ?? [];
-  const extra = unexpectedInitTools(listed, tools, lifts, toleratedInitTools(listed, def));
+  const extra = unexpectedInitTools(listed, tools, lifts, toleratedInitTools(listed, def), def.observeWrites ? OBSERVED_WRITE_TOOLS : []);
   if (extra.length) return loadFailureGate(stopGate(EXIT.STOPPED, `init lists tools outside this turn's set: ${extra.join(", ")}`));
   if (tools.includes("Skill") && !(listed ?? []).includes("Skill")) return loadFailureGate(stopGate(EXIT.STOPPED, "init does not list Skill, which this turn needs"));
   return null;

@@ -170,6 +170,8 @@ function sessionOptionFault(o) {
   if (o?.strictMcpConfig !== true) return "strictMcpConfig must be true";
   if (typeof o?.settings !== "string" || !o.settings) return "settings must be a non-empty string";
   if (!Array.isArray(o?.tools)) return "tools must be an array";
+  // A disallowed name is never approved, on any row: Write and Edit on an `observeWrites` row are shown, not allowed.
+  if (Array.isArray(o?.allowedTools) && o.allowedTools.some((t) => DISALLOWED_TOOLS.includes(t))) return "allowedTools must not name a disallowed tool";
   if (o?.extraArgs !== undefined && o?.extraArgs !== null && "bare" in Object(o.extraArgs)) return "extraArgs must not carry bare";
   return null;
 }
@@ -193,6 +195,10 @@ export const SDK_PACKAGE_DENY = ["Read(//**/node_modules/@anthropic-ai/**)", "Ed
 // Monitor, WebFetch, WebSearch, RemoteTrigger, Workflow. The fixed `tools` list and the load check
 // on init cover the rest of that table.
 export const DISALLOWED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Monitor", "RemoteTrigger", "Workflow", "WebFetch", "WebSearch", ...SUBAGENT_TOOLS, ...SDK_PACKAGE_DENY];
+// The only disallowed names a row may show, and only a row with `observeWrites` (rows.mjs): they leave
+// `disallowedTools` and join `tools`, never `allowedTools`, which sessionOptionFault refuses. Under dontAsk
+// with no allow rule each call is denied, so nothing is written and the attempt shows in the stream.
+export const OBSERVED_WRITE_TOOLS = ["Write", "Edit"];
 export const LIFTABLE = ["settings_deny", "init_scan", "tool_use_scan"]; // never "library"
 export const OVERRIDE_MAX_MINUTES = 240;
 
@@ -239,11 +245,13 @@ export function toleratedInitTools(listed, { connector = false, initForm = false
 }
 
 // Init tools to refuse: everything outside the turn's `tools`, the connector's names and the tolerated
-// list, and any disallowed name even if a turn's `tools` held it. The init_scan lift excuses only what
-// scanInitTools catches, so a shell tool is never excused.
-export function unexpectedInitTools(listed, turnTools, lifted = [], tolerated = []) {
+// list, and any disallowed name even if a turn's `tools` held it, except an `observed` name the turn's
+// `tools` holds: OBSERVED_WRITE_TOOLS, passed on an `observeWrites` row only. The init_scan lift excuses
+// only what scanInitTools catches, so a shell tool is never excused.
+export function unexpectedInitTools(listed, turnTools, lifted = [], tolerated = [], observed = []) {
   const excused = (t) => lifted.includes("init_scan") && scanInitTools([t]).length > 0;
-  const allowed = (t) => (turnTools.includes(t) && !DISALLOWED_TOOLS.includes(t)) || (typeof t === "string" && t.startsWith("mcp__quadron__")) || tolerated.includes(t);
+  const shown = (t) => OBSERVED_WRITE_TOOLS.includes(t) && observed.includes(t);
+  const allowed = (t) => (turnTools.includes(t) && (!DISALLOWED_TOOLS.includes(t) || shown(t))) || (typeof t === "string" && t.startsWith("mcp__quadron__")) || tolerated.includes(t);
   return (listed ?? []).filter((t) => !allowed(t) && !excused(t));
 }
 

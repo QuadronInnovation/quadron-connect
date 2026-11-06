@@ -33,6 +33,13 @@ function hygiene(dirs, fs) {
   return dirs.flatMap((d) => credentialFilesIn(d, fs));
 }
 
+// The relative paths that differ between two snapshotTree lists: added, changed or gone.
+export function changedEntries(before, after) {
+  const name = (e) => e.replace(/\|.*$/, "");
+  const a = new Set(before), b = new Set(after);
+  return [...new Set([...after.filter((e) => !a.has(e)), ...before.filter((e) => !b.has(e))].map(name))].sort();
+}
+
 function rowSecondsFrom(f) {
   const s = f["row-timeout-seconds"] === undefined ? DEFAULT_ROW_TIMEOUT_SECONDS : num(f["row-timeout-seconds"]);
   if (s === null) throw new Refusal("--row-timeout-seconds must be a positive number");
@@ -318,6 +325,8 @@ async function rowAttempt(ctx, def) {
   // working directory is the plugin directory, which is normally inside the clone.
   const beforeClone = snapshotTree(repoRoot, fs);
   const beforeTree = def.cwd === "plugin" ? snapshotTree(cwd, fs) : null;
+  // An `observeWrites` row's working directory is new and empty: anything in it afterwards was written there.
+  const beforeCwd = def.observeWrites ? snapshotTree(cwd, fs) : null;
 
   const summary = {
     partial: false, row, model: f.model, effort: f.effort, mode: "not bare",
@@ -356,7 +365,7 @@ async function rowAttempt(ctx, def) {
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
         resume: i > 0 ? sessionId : undefined, settingsPath: f.settings, pluginDir: f["plugin-dir"],
-        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin),
+        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin), observeWrites: Boolean(def.observeWrites),
       });
 
       let can, entry;
@@ -474,7 +483,8 @@ async function rowAttempt(ctx, def) {
     summary.stoppedBecause = "auth failure";
     exitCode = EXIT.AUTH;
   } else if (summary.verdict === null && !summary.partial) {
-    const v = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording });
+    const filesWritten = beforeCwd ? changedEntries(beforeCwd, snapshotTree(cwd, fs)) : [];
+    const v = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten });
     summary.verdict = v.verdict;
     summary.notes.push(...(v.notes ?? []));
     for (const k of ["judgmentId", "savedWording", "signedClaim", "routing", "quadName", "citesProject", "offerSentence"]) if (v[k] !== undefined) summary[k] = v[k];

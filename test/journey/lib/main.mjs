@@ -39,7 +39,7 @@ const JOURNEY_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const USAGE = `Dry by default (no calls). Live only with --live.
 Run flags (all required unless --dry-run): --model <id> --effort <low|medium|high|xhigh|max>
   --max-session-usd <n> --max-run-usd <n> --expected-account <text>
-  --ledger <path> --row <T2|T4|T5|T6|ISSUE2|T4O-S|T4O-N|T4O-C>   (one row per command; a retry names one row)
+  --ledger <path> --row <T2|T4|T5|T6|ISSUE2|T4O-S|T4O-N|T4O-C|ROUTE-1>   (one row per command; a retry names one row)
 Live also needs: --settings <file> --plugin-dir <dir> (not T4O-C) --config-dir <empty dir> --out <dir> [--mcp-url <url>]
   [--account-label <text>] [--row-timeout-seconds <n>] [--routing-blocked <reason>] [--override <file>]
   [--max-total-usd <n>] (lowers ${CAMPAIGN_CEILING_USD} USD, never raises it) [--max-output-tokens <n>] (lowers ${MAX_OUTPUT_TOKENS}, never raises it)
@@ -118,7 +118,8 @@ function dryReport(f, io, explicit, red) {
     const offer = d.offerPhrase ? `; offer phrase "${d.offerPhrase}"` : "";
     const surface = d.noPlugin ? "; connector only, no plugin or skill" : "";
     const reading = d.diagnostic ? "; diagnostic: never a pass, exit 0 whichever way the turn goes" : "";
-    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}`);
+    const shown = d.observeWrites ? "; Write and Edit shown and never allowed, so a save to a file is seen and denied" : "";
+    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}${shown}`);
   }
   out(explicit ? "dry run (explicit)" : "dry run (default: pass --live to run for real)");
 }

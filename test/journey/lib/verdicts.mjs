@@ -504,6 +504,50 @@ export const verdictOfferRow = (row) => ([a]) => {
   return out;
 };
 
+// ROUTE-1: asked to save with no Quadron or project cue, the save goes to the session's capture tool
+// (pickCaptureTool on this turn's init) exactly once, accepted, and nowhere else. A call to a built-in
+// file tool fails the row whether or not it was denied, and so does any file in the new working
+// directory afterwards (`filesWritten`, from live.mjs). The notes always say which route the save took,
+// so a failure names the wrong one. Which project the capture names is recorded, not judged: the
+// prompt names none, and the skill says never to guess one.
+export const WRONG_ROUTE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+const SAVE_CLAIM_RE = /\b(saved|filed|stored|kept|noted|remembered)\b/i;
+const targetOf = (input) => {
+  const p = input?.file_path ?? input?.notebook_path ?? input?.path;
+  return typeof p === "string" && p ? p : "no path";
+};
+export function verdictRoute1([a], { filesWritten = [] } = {}) {
+  const f = [];
+  const tool = pickCaptureTool(a.init?.tools);
+  const wrong = a.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
+  const routes = wrong.map((u) => `${u.name} ${targetOf(u.input)}${denied(a, u.id) ? " (denied)" : ""}`);
+  if (wrong.length) f.push(`wrong save route: ${routes.join("; ")}`);
+  if (filesWritten.length) f.push(`files written in the working directory: ${filesWritten.join(", ")}`);
+  const caps = a.tool_uses.filter((u) => CAPTURE_RE.test(u.name));
+  const other = caps.filter((u) => u.name !== tool);
+  if (other.length) f.push(`another capture tool was called: ${other.map((u) => u.name).join(", ")}`);
+  const mine = caps.filter((u) => u.name === tool);
+  const accepted = mine.filter((u) => writeAccepted(a, u.id));
+  if (!mine.length) f.push(`no ${tool} call`);
+  else if (mine.length !== 1 || accepted.length !== 1) f.push(`${tool} calls: ${mine.length}, accepted: ${accepted.length} (expected 1 and 1)`);
+  if (mine.some((u) => reportsFailedWrite(resultOf(a, u.id)))) f.push(`${tool} reply reports a failed write (ok:false, or "may or may not be in the record")`);
+  if (!a.result) f.push("no result");
+  else if (!success(a)) f.push(`result was ${a.result.subtype}`);
+  f.push(...contextFails([a]));
+  const via = [
+    ...accepted.map((u) => u.name),
+    ...mine.filter((u) => !accepted.includes(u)).map((u) => `${u.name} (not accepted)`),
+    ...other.map((u) => `${u.name} (other capture tool)`),
+    ...routes, ...filesWritten.map((p) => `file ${p}`),
+  ];
+  const notes = [`capture tool: ${tool}`, `save route: ${via.length ? via.join("; ") : "none"}`];
+  if (accepted.length) notes.push(`quad_name: ${typeof accepted[0].input?.quad_name === "string" ? accepted[0].input.quad_name : "not sent"}`);
+  if (!accepted.length) notes.push(`answer claims a save: ${SAVE_CLAIM_RE.test(`${a.assistant_text}\n${answer(a)}`) ? "yes" : "no"} (a word match, read the evidence)`);
+  const out = fin(f);
+  out.notes.push(...notes);
+  return out;
+}
+
 // Never a pass and never a product failure, whichever way the turn went.
 export const DIAGNOSTIC = "DIAGNOSTIC";
 export const verdictDiagnosticOffer = (row) => ([a]) => {
@@ -518,4 +562,5 @@ export const verdictDiagnosticOffer = (row) => ([a]) => {
 export const VERDICTS = {
   T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
   "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
+  "ROUTE-1": verdictRoute1,
 };

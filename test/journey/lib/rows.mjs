@@ -14,7 +14,12 @@
 // the plugin in init is a load stop, and Skill in init is only noted. `diagnostic`: the verdict is
 // DIAGNOSTIC, so the row can neither pass nor fail the product, and it adds nothing to the findings.
 // `repeatAfterPass`: a no-write row read on two runs, so a pass does not refuse its second Opus attempt
-// at that head. No flag or override reaches it, and a third attempt still refuses.
+// at that head. No flag or override reaches it, and a third attempt still refuses. `observeWrites`: the
+// built-in Write and Edit join the session's built-in set and leave `disallowedTools`, for this row only,
+// so a save sent to a file instead of the capture tool can be seen. They are never on an allow-list, so
+// dontAsk denies each call: the attempt is what the verdict reads. See OBSERVED_WRITE_TOOLS in guards.mjs.
+
+import { OBSERVED_WRITE_TOOLS } from "./guards.mjs";
 
 const q = (t) => `mcp__quadron__${t}`;
 export const CAPTURE_PLACEHOLDER = "<captureTool>";
@@ -134,15 +139,32 @@ export const ROWS = {
       prompt: T4_DECISION_PROMPT,
     }],
   },
+  // Routing: asked to save, with no Quadron or project cue, the save goes to the capture tool and not
+  // to a file. One turn: an explicit request to save that specific thing is the yes (the skill's
+  // capture rule), so no offer comes first. Both capture names are allowed, since the placeholder can
+  // only be resolved from an init that comes before the turn; the verdict holds the session to the one
+  // pickCaptureTool reads from this turn's init. Write and Edit are shown and denied: see observeWrites.
+  "ROUTE-1": {
+    connector: true,
+    cwd: "empty",
+    observeWrites: true,
+    turns: [{
+      maxTurns: 6,
+      tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read"), q("future_you_capture"), q("quad_commit")],
+      prompt: "Decision: we bill annually only; monthly plans are ruled out. Please save that so it's remembered.",
+    }],
+  },
 };
 
 export const ROW_NAMES = Object.keys(ROWS);
 
 // A turn's `tools` option: the built-in names in its allow-list, plus the tools a row's outside check
-// watches. Connector names and the capture tool stay in `allowedTools` only.
+// watches, plus Write and Edit on an `observeWrites` row. Connector names and the capture tool stay in
+// `allowedTools` only, and the tools added here never reach it.
 export const turnTools = (def, turn) => [...new Set([
   ...turn.tools.filter((t) => t !== CAPTURE_PLACEHOLDER && !t.startsWith("mcp__")),
   ...(def.outsideCheck ?? []),
+  ...(def.observeWrites ? OBSERVED_WRITE_TOOLS : []),
 ])];
 
 export const CAPTURE_TOOLS = [q("future_you_capture"), q("quad_commit")];

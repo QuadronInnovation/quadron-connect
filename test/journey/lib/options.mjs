@@ -36,7 +36,7 @@
 // ENV_ALLOWLIST in guards.mjs.
 
 import path from "node:path";
-import { DISALLOWED_TOOLS, insideDir, resolveReal } from "./guards.mjs";
+import { DISALLOWED_TOOLS, OBSERVED_WRITE_TOOLS, insideDir, resolveReal } from "./guards.mjs";
 
 // For the check after a call: a file tool's target resolves, links followed, inside the root. Glob's
 // pattern cannot climb out; Grep's pattern is a regular expression, so only its path counts. Input
@@ -55,7 +55,7 @@ export function inScope(toolName, input, { root, fs }) {
 
 export function buildOptions({
   model, effort, sessionUsd, maxTurns, tools, allowedTools, resume, settingsPath, pluginDir,
-  mcpServers, childEnv, cwd, noPlugin = false,
+  mcpServers, childEnv, cwd, noPlugin = false, observeWrites = false,
 }) {
   const o = {
     settings: settingsPath, // flag-settings layer (sdk.d.ts:2271-2289), holds the web and browser deny rules
@@ -64,7 +64,9 @@ export function buildOptions({
     strictMcpConfig: true,
     tools,
     allowedTools,
-    disallowedTools: [...DISALLOWED_TOOLS],
+    // An `observeWrites` row shows Write and Edit so a wrong save route can be seen; they stay off
+    // `allowedTools`, so dontAsk denies each call. The Edit deny pattern for the SDK package stays.
+    disallowedTools: DISALLOWED_TOOLS.filter((t) => !(observeWrites && OBSERVED_WRITE_TOOLS.includes(t))),
     permissionMode: "dontAsk",
     systemPrompt: { type: "preset", preset: "claude_code" },
   };
