@@ -16,7 +16,8 @@
 // available skills". A keyed run under it measured init `tools: ["Read"]`, so a row that needs the skill
 // tool cannot pass there. Kept out here instead, one by one: user and project settings (empty
 // `settingSources`), other MCP servers (`strictMcpConfig`), built-in tools outside a turn's set (`tools`,
-// and the load check on init), and through the child's environment auto memory, built-in agents,
+// and the load check on init), and through the child's environment auto memory (on for an `autoMemory`
+// row only: see rows.mjs), built-in agents,
 // background tasks and marketplace installs. A settings file carrying hooks refuses. Plugin hooks are
 // not checked: a hook event ahead of init adds a note to the summary, and nothing more.
 //

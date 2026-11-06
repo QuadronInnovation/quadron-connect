@@ -4,7 +4,7 @@
 import path from "node:path";
 
 import {
-  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, readHead, scanToolUses, snapshotTree, toleratedInitTools,
+  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, assertAutoMemory, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, isMemoryPath, readHead, scanToolUses, snapshotTree, toleratedInitTools,
 } from "./guards.mjs";
 import {
   SpendTracker, MAX_OUTPUT_TOKENS, NOT_SHOWN, appendEntry, bindLimit, checkAttempts, checkLedgerMatchesRecord, closeCall, ledgerLimit, markConfirmed,
@@ -38,6 +38,16 @@ export function changedEntries(before, after) {
   const name = (e) => e.replace(/\|.*$/, "");
   const a = new Set(before), b = new Set(after);
   return [...new Set([...after.filter((e) => !a.has(e)), ...before.filter((e) => !b.has(e))].map(name))].sort();
+}
+
+// An `autoMemory` row's watched roots: the isolated config directory (CLAUDE_CONFIG_DIR) and the
+// isolated home, both made or checked empty by this harness, never the real user's. Each label stands
+// in for the path in what is printed.
+const memoryRoots = (f, homeDir) => [["config-dir", f["config-dir"]], ["home", homeDir]];
+export const snapshotMemoryRoots = (roots, fs) => roots.map(([label, dir]) => [label, snapshotTree(dir, fs)]);
+// The changed paths under those roots that are auto memory or a CLAUDE.md, as `<label>/<relative path>`.
+export function memoryChangesBetween(before, after) {
+  return before.flatMap(([label, b], i) => changedEntries(b, after[i][1]).filter(isMemoryPath).map((p) => `${label}/${p}`));
 }
 
 function rowSecondsFrom(f) {
@@ -129,6 +139,7 @@ const streamFacts = (call, s) => ({
 function sessionOptions(ctx, args) {
   const options = (ctx.testOptionsHook ?? ((o) => o))(buildOptions(args));
   assertSessionOptions(options);
+  assertAutoMemory(options, args.autoMemory === true);
   return options;
 }
 // Refuses before any form creates a directory, takes a lock, mints a token or loads the SDK.
@@ -320,7 +331,13 @@ async function rowAttempt(ctx, def) {
     io.err("could not create the evidence directory: no call made");
     return { exitCode: EXIT.STOPPED, evidenceFailed: true };
   }
-  const childEnv = buildChildEnv(env, { configDir: f["config-dir"], homeDir, maxOutputTokens: budget.maxOutputTokens });
+  const autoMemory = def.autoMemory === true;
+  const childEnv = buildChildEnv(env, { configDir: f["config-dir"], homeDir, maxOutputTokens: budget.maxOutputTokens, autoMemory });
+  // An `autoMemory` row loads its own settings file, checked in main.mjs; every other row loads --settings.
+  const settingsPath = autoMemory ? f["auto-memory-settings"] : f.settings;
+  if (!settingsPath) throw new Refusal("no settings file for this row");
+  // Auto memory and CLAUDE.md in the isolated config and home directories, before the row.
+  const beforeMemory = autoMemory ? snapshotMemoryRoots(memoryRoots(f, homeDir), fs) : null;
   // The clone must stay clean. This shows whether a child touched it; it cannot prevent that. T5's
   // working directory is the plugin directory, which is normally inside the clone.
   const beforeClone = snapshotTree(repoRoot, fs);
@@ -364,8 +381,8 @@ async function rowAttempt(ctx, def) {
       const allowedTools = turn.tools.map((t) => (t === CAPTURE_PLACEHOLDER ? captureTool ?? pickCaptureTool(null) : t));
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
-        resume: i > 0 ? sessionId : undefined, settingsPath: f.settings, pluginDir: f["plugin-dir"],
-        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin), observeWrites: Boolean(def.observeWrites),
+        resume: i > 0 ? sessionId : undefined, settingsPath, pluginDir: f["plugin-dir"],
+        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin), observeWrites: Boolean(def.observeWrites), autoMemory,
       });
 
       let can, entry;
@@ -477,6 +494,7 @@ async function rowAttempt(ctx, def) {
   }
 
   // ---- verdict
+  const memoryChanges = beforeMemory ? memoryChangesBetween(beforeMemory, snapshotMemoryRoots(memoryRoots(f, homeDir), fs)) : [];
   if (authFailed) {
     summary.verdict = "auth failure";
     summary.partial = true;
@@ -484,7 +502,7 @@ async function rowAttempt(ctx, def) {
     exitCode = EXIT.AUTH;
   } else if (summary.verdict === null && !summary.partial) {
     const filesWritten = beforeCwd ? changedEntries(beforeCwd, snapshotTree(cwd, fs)) : [];
-    const v = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten });
+    const v = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, memoryChanges });
     summary.verdict = v.verdict;
     summary.notes.push(...(v.notes ?? []));
     for (const k of ["judgmentId", "savedWording", "signedClaim", "routing", "quadName", "citesProject", "offerSentence"]) if (v[k] !== undefined) summary[k] = v[k];
@@ -527,6 +545,8 @@ async function rowAttempt(ctx, def) {
   if (cred.length) hygieneFailures.push(`credential-named file in the config or home directory: ${cred.length}`);
   if (JSON.stringify(snapshotTree(repoRoot, fs)) !== JSON.stringify(beforeClone)) hygieneFailures.push("the clone changed during the row");
   if (beforeTree && JSON.stringify(snapshotTree(cwd, fs)) !== JSON.stringify(beforeTree)) hygieneFailures.push("the plugin directory changed during the row");
+  // A row stopped before its verdict still says so: the verdict above reads the same list.
+  if (memoryChanges.length && summary.partial) hygieneFailures.push(`auto memory or CLAUDE.md changed: ${memoryChanges.join(", ")}`);
   for (const h of hygieneFailures) {
     summary.notes.push(h);
     io.out(`hygiene failure: ${h}`);

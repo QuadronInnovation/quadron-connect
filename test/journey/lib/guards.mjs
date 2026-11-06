@@ -59,8 +59,8 @@ export const ENV_ALLOWLIST = {
   [KEY_VAR]: "the one credential the run may use",
   CLAUDE_CONFIG_DIR: "relocates the config directory, set by the harness",
   // code.claude.com/docs/en/agent-sdk/claude-code-features. With no bare mode, this is what keeps auto
-  // memory out of a session.
-  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "docs: agent-sdk/claude-code-features, set by the harness to 1",
+  // memory out of a session. A row with `autoMemory` (rows.mjs) gets 0 instead; see AUTO_MEMORY_ON.
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "docs: agent-sdk/claude-code-features, set by the harness to 1, or 0 on an `autoMemory` row only",
   CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "set by the harness to 1: no built-in sub-agents in a session",
   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "set by the harness to 1: nothing runs behind a turn",
   CLAUDE_CODE_DISABLE_AGENT_VIEW: "set by the harness to 1: no agent view",
@@ -85,7 +85,14 @@ const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_
 
 // UNMEASURED until a keyed run: whether the binary and the session work with an empty home, and
 // whether pointing these variables at it keeps every read and write away from the real home.
-export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens }) {
+//
+// `autoMemory`: the one switch that differs by row. Off (the default) sets CLAUDE_CODE_DISABLE_AUTO_MEMORY
+// to 1 like every fixed switch; on sets it to AUTO_MEMORY_ON, never inherited either way.
+export const AUTO_MEMORY_VAR = "CLAUDE_CODE_DISABLE_AUTO_MEMORY";
+// UNVERIFIED against the docs at this commit: that 0 turns auto memory on rather than only not turning
+// it off. The row's own settings file carries autoMemoryEnabled: true as well (checkSettingsDenyOnly).
+export const AUTO_MEMORY_ON = "0";
+export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMemory = false }) {
   if (!homeDir) throw new Refusal("no isolated home directory for the child");
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0) throw new Refusal("no output token limit for the child");
   const out = {};
@@ -101,6 +108,7 @@ export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens }) {
   }
   if (configDir) out.CLAUDE_CONFIG_DIR = configDir;
   for (const k of FIXED_ON) out[k] = "1";
+  if (autoMemory === true) out[AUTO_MEMORY_VAR] = AUTO_MEMORY_ON;
   out.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokens);
   out.CLAUDE_CODE_MAX_RETRIES = "1";
   out.CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES = "0";
@@ -150,10 +158,15 @@ export const fastModeStatedOff = (init) => init?.fast_mode_state === "off";
 const SETTINGS_KEYS = ["$schema", "permissions", "fastMode"];
 const SETTINGS_PERMISSION_KEYS = ["deny", "allow"];
 const isPlainObject = (o) => Boolean(o) && typeof o === "object" && !Array.isArray(o);
-export function checkSettingsDenyOnly(settings) {
+// `autoMemory`: the check for an `autoMemory` row's own settings file (--auto-memory-settings), which
+// must also carry autoMemoryEnabled: true and nothing else beyond these keys. Every other file refuses it.
+export const AUTO_MEMORY_SETTING = "autoMemoryEnabled";
+export function checkSettingsDenyOnly(settings, { autoMemory = false } = {}) {
   const refuse = (what) => new Refusal(`the settings file may carry only deny rules: ${what}; refusing`);
   if (!isPlainObject(settings)) throw refuse("it is not an object");
-  for (const k of Object.keys(settings)) if (!SETTINGS_KEYS.includes(k)) throw refuse(`it contains ${k}`);
+  const keys = autoMemory ? [...SETTINGS_KEYS, AUTO_MEMORY_SETTING] : SETTINGS_KEYS;
+  for (const k of Object.keys(settings)) if (!keys.includes(k)) throw refuse(`it contains ${k}`);
+  if (autoMemory && settings[AUTO_MEMORY_SETTING] !== true) throw new Refusal(`the auto-memory settings file must set ${AUTO_MEMORY_SETTING} to true; refusing`);
   if (!Object.prototype.hasOwnProperty.call(settings, "permissions")) return;
   const { permissions } = settings;
   if (!isPlainObject(permissions)) throw refuse("permissions is not an object");
@@ -178,6 +191,20 @@ function sessionOptionFault(o) {
 export function assertSessionOptions(options) {
   const fault = sessionOptionFault(options);
   if (fault) throw new Refusal(`session options refused: ${fault}; nothing started`);
+}
+
+// The per-row check on a session's auto-memory switch, beside assertSessionOptions (which reads the
+// options alone and cannot know the row). Off: an env, when given, must set it to 1. On, for an
+// `autoMemory` row only: an env must be given and set it to AUTO_MEMORY_ON. A session with no env is
+// the guard-only check before any form starts, which sends no prompt.
+export function assertAutoMemory(options, autoMemory) {
+  const env = options?.env;
+  const value = env && typeof env === "object" ? env[AUTO_MEMORY_VAR] : undefined;
+  if (autoMemory === true) {
+    if (value !== AUTO_MEMORY_ON) throw new Refusal(`session options refused: ${AUTO_MEMORY_VAR} must be ${AUTO_MEMORY_ON} on an autoMemory row; nothing started`);
+  } else if (env !== undefined && env !== null && value !== "1") {
+    throw new Refusal(`session options refused: ${AUTO_MEMORY_VAR} must be 1 on this row; nothing started`);
+  }
 }
 
 // -------------------------------------------------------------- web and browser tool restrictions
@@ -351,6 +378,19 @@ export function snapshotTree(dir, fs) {
   };
   walk(dir, "");
   return out.sort();
+}
+
+// On an `autoMemory` row: which changed paths (relative, from changedEntries in live.mjs) are a write to
+// auto memory or to a CLAUDE.md. A path with a directory named `memory` at any depth is the memory
+// directory, wherever under the watched root it sits: the exact location is not pinned here, so any
+// depth counts. A CLAUDE.md or CLAUDE.local.md anywhere counts too. Names only: no file is read.
+export const MEMORY_DIR_NAME = "memory";
+export const CLAUDE_MD_RE = /^CLAUDE(\.local)?\.md$/i;
+export function isMemoryPath(rel) {
+  const parts = String(rel).replace(/\\/g, "/").replace(/\/+$/, "").split("/").filter(Boolean);
+  if (!parts.length) return false;
+  if (CLAUDE_MD_RE.test(parts[parts.length - 1])) return true;
+  return parts.some((p) => p.toLowerCase() === MEMORY_DIR_NAME);
 }
 
 // -------------------------------------------------------------- head of the clone

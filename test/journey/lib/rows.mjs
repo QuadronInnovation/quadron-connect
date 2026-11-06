@@ -18,6 +18,11 @@
 // built-in Write and Edit join the session's built-in set and leave `disallowedTools`, for this row only,
 // so a save sent to a file instead of the capture tool can be seen. They are never on an allow-list, so
 // dontAsk denies each call: the attempt is what the verdict reads. See OBSERVED_WRITE_TOOLS in guards.mjs.
+// `autoMemory`: Claude Code's built-in auto memory is on for this row only. Its session loads the row's
+// own settings file (--auto-memory-settings, which must set autoMemoryEnabled: true and is refused on any
+// other row), its child env sets CLAUDE_CODE_DISABLE_AUTO_MEMORY to 0 where every other row sets 1, and
+// the isolated config and home directories are snapshotted before and after: a memory directory or a
+// CLAUDE.md that changed fails the row, by path (isMemoryPath in guards.mjs).
 
 import { OBSERVED_WRITE_TOOLS } from "./guards.mjs";
 
@@ -144,10 +149,12 @@ export const ROWS = {
   // capture rule), so no offer comes first. Both capture names are allowed, since the placeholder can
   // only be resolved from an init that comes before the turn; the verdict holds the session to the one
   // pickCaptureTool reads from this turn's init. Write and Edit are shown and denied: see observeWrites.
+  // Auto memory is on, so the built-in route is really there to take: see autoMemory.
   "ROUTE-1": {
     connector: true,
     cwd: "empty",
     observeWrites: true,
+    autoMemory: true,
     turns: [{
       maxTurns: 6,
       tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read"), q("future_you_capture"), q("quad_commit")],

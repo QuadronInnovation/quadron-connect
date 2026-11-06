@@ -31,7 +31,7 @@ import { checkSessionOptions, liveInitOnly, liveInitWithTurn, liveRow, markJudgm
 
 const VALUE_FLAGS = ["model", "effort", "max-session-usd", "max-run-usd", "max-total-usd", "max-output-tokens", "expected-account", "account-label",
   "ledger", "row", "settings", "plugin-dir", "mcp-url", "config-dir", "out", "override", "row-timeout-seconds",
-  "routing-blocked", "mark-judgment-confirmed"];
+  "routing-blocked", "mark-judgment-confirmed", "auto-memory-settings"];
 const BOOL_FLAGS = ["live", "dry-run", "init-only", "expect-no-key", "init-only-with-turn"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"]; // sdk.d.ts:1974
 const JOURNEY_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -42,6 +42,7 @@ Run flags (all required unless --dry-run): --model <id> --effort <low|medium|hig
   --ledger <path> --row <T2|T4|T5|T6|ISSUE2|T4O-S|T4O-N|T4O-C|ROUTE-1>   (one row per command; a retry names one row)
 Live also needs: --settings <file> --plugin-dir <dir> (not T4O-C) --config-dir <empty dir> --out <dir> [--mcp-url <url>]
   [--account-label <text>] [--row-timeout-seconds <n>] [--routing-blocked <reason>] [--override <file>]
+  --auto-memory-settings <file> (ROUTE-1 only, and required there: its own settings, deny rules plus autoMemoryEnabled: true)
   [--max-total-usd <n>] (lowers ${CAMPAIGN_CEILING_USD} USD, never raises it) [--max-output-tokens <n>] (lowers ${MAX_OUTPUT_TOKENS}, never raises it)
 Live also needs, from the environment only: QUADRON_CAMPAIGN_RECORD (an existing file outside the clone; empty is a total of zero),
   QUADRON_CAMPAIGN_WORKSPACE, QUADRON_CAMPAIGN_ID.
@@ -119,7 +120,8 @@ function dryReport(f, io, explicit, red) {
     const surface = d.noPlugin ? "; connector only, no plugin or skill" : "";
     const reading = d.diagnostic ? "; diagnostic: never a pass, exit 0 whichever way the turn goes" : "";
     const shown = d.observeWrites ? "; Write and Edit shown and never allowed, so a save to a file is seen and denied" : "";
-    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}${shown}`);
+    const memory = d.autoMemory ? "; auto memory on, from --auto-memory-settings, with the memory directory and CLAUDE.md watched" : "";
+    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}${shown}${memory}`);
   }
   out(explicit ? "dry run (explicit)" : "dry run (default: pass --live to run for real)");
 }
@@ -237,6 +239,18 @@ async function runLive(ctx) {
   checkSettingsDeny(settings, lifts);
   checkFastModeSettings(settings);
   checkSettingsDenyOnly(settings);
+  // An `autoMemory` row runs on its own settings file and no other row may name one. Same checks as
+  // --settings, plus autoMemoryEnabled: true.
+  const autoMemoryRow = !initMode && ROWS[f.row].autoMemory === true;
+  if (f["auto-memory-settings"] !== undefined && !autoMemoryRow) throw new Refusal("--auto-memory-settings applies to an auto-memory row only (ROUTE-1)");
+  if (autoMemoryRow) {
+    if (!f["auto-memory-settings"]) throw new Refusal(`--auto-memory-settings is required for ${f.row}: it runs on its own settings file with auto memory on`);
+    let own;
+    try { own = JSON.parse(fs.readFileSync(f["auto-memory-settings"], "utf8")); } catch { throw new Refusal("auto-memory settings file missing or not valid JSON"); }
+    checkSettingsDeny(own, lifts);
+    checkFastModeSettings(own);
+    checkSettingsDenyOnly(own, { autoMemory: true });
+  }
   checkConfigDir(f["config-dir"], fs);
   checkSessionOptions(ctx);
 

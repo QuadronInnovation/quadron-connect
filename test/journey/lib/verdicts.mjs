@@ -507,7 +507,9 @@ export const verdictOfferRow = (row) => ([a]) => {
 // ROUTE-1: asked to save with no Quadron or project cue, the save goes to the session's capture tool
 // (pickCaptureTool on this turn's init) exactly once, accepted, and nowhere else. A call to a built-in
 // file tool fails the row whether or not it was denied, and so does any file in the new working
-// directory afterwards (`filesWritten`, from live.mjs). The notes always say which route the save took,
+// directory afterwards (`filesWritten`, from live.mjs), and so does any change to auto memory or a
+// CLAUDE.md in the isolated config or home directory (`memoryChanges`, labelled paths from live.mjs, for
+// an `autoMemory` row). The notes always say which route the save took,
 // so a failure names the wrong one. Which project the capture names is recorded, not judged: the
 // prompt names none, and the skill says never to guess one.
 export const WRONG_ROUTE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
@@ -516,13 +518,14 @@ const targetOf = (input) => {
   const p = input?.file_path ?? input?.notebook_path ?? input?.path;
   return typeof p === "string" && p ? p : "no path";
 };
-export function verdictRoute1([a], { filesWritten = [] } = {}) {
+export function verdictRoute1([a], { filesWritten = [], memoryChanges = [] } = {}) {
   const f = [];
   const tool = pickCaptureTool(a.init?.tools);
   const wrong = a.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
   const routes = wrong.map((u) => `${u.name} ${targetOf(u.input)}${denied(a, u.id) ? " (denied)" : ""}`);
   if (wrong.length) f.push(`wrong save route: ${routes.join("; ")}`);
   if (filesWritten.length) f.push(`files written in the working directory: ${filesWritten.join(", ")}`);
+  if (memoryChanges.length) f.push(`auto memory or CLAUDE.md changed: ${memoryChanges.join(", ")}`);
   const caps = a.tool_uses.filter((u) => CAPTURE_RE.test(u.name));
   const other = caps.filter((u) => u.name !== tool);
   if (other.length) f.push(`another capture tool was called: ${other.map((u) => u.name).join(", ")}`);
@@ -538,7 +541,7 @@ export function verdictRoute1([a], { filesWritten = [] } = {}) {
     ...accepted.map((u) => u.name),
     ...mine.filter((u) => !accepted.includes(u)).map((u) => `${u.name} (not accepted)`),
     ...other.map((u) => `${u.name} (other capture tool)`),
-    ...routes, ...filesWritten.map((p) => `file ${p}`),
+    ...routes, ...filesWritten.map((p) => `file ${p}`), ...memoryChanges.map((p) => `memory ${p}`),
   ];
   const notes = [`capture tool: ${tool}`, `save route: ${via.length ? via.join("; ") : "none"}`];
   if (accepted.length) notes.push(`quad_name: ${typeof accepted[0].input?.quad_name === "string" ? accepted[0].input.quad_name : "not sent"}`);
