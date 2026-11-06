@@ -10,9 +10,27 @@ when to read the person's Quadron record and what it may write to it. The transp
 ```
 plugins/claude-code/
 ├── .claude-plugin/plugin.json   # name, version, description
+├── routing/save-routing.json    # snapshot of the server's save-routing sentence
 ├── skills/quadron/SKILL.md      # when to recall, what may be captured
 └── README.md                    # this file
 ```
+
+## Save routing snapshot
+
+The Quadron MCP server owns the save-routing sentence at the start of the `quad_commit` and
+`future_you_capture` descriptions; `routing/save-routing.json` is a committed copy of it (`text`,
+`source`, `status`, and `server_text_sha256`, the SHA-256 of `text`, which is the pin). The skill's block between the
+`BEGIN GENERATED: save-routing` and `END GENERATED: save-routing` markers is written from it by
+`node scripts/gen-routing.mjs`; never edit that block by hand. When the server's sentence changes,
+paste the new text into the snapshot, set `status`, update `server_text_sha256` (for example
+`printf '%s' "<text>" | sha256sum`), run `node scripts/gen-routing.mjs`, and commit the snapshot and
+SKILL.md together. Run `node scripts/gen-routing.mjs --check` before committing; it exits 1 if they differ.
+Before merging, check the snapshot against the server locally: save the server's `tools/list`
+result as JSON yourself and run `node scripts/routing-drift.mjs <dump.json>`. It prints an OK or
+DRIFT row per save tool and exits 1 on drift; `--tools a,b` changes the tool list, and
+`--expect-instructions <file>` also requires the sentence in the server's instructions (off by
+default: the sentence is not there today). The drift check makes no network call and is not run in
+public CI. Tests for both scripts: `node --test scripts/test/routing.test.mjs`.
 
 The repo root carries `.claude-plugin/marketplace.json` so the plugin can be installed from
 this repository. The two files are independent: the marketplace manifest only points at
