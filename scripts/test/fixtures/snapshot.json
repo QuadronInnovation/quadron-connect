@@ -1,7 +1,6 @@
 {
   "text": "When the person asks to save a note, save it with this tool to their Quadron record.",
   "source": "Quadron MCP server",
-  "server_commit": "pending",
   "status": "draft",
-  "sha256": "fabd0dc5192885beb066345a28b0a123dd5a87700bbec5197c341b95d52d20ed"
+  "server_text_sha256": "fabd0dc5192885beb066345a28b0a123dd5a87700bbec5197c341b95d52d20ed"
 }

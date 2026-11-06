@@ -19,10 +19,10 @@ plugins/claude-code/
 
 The Quadron MCP server owns the save-routing sentence at the start of the `quad_commit` and
 `future_you_capture` descriptions; `routing/save-routing.json` is a committed copy of it (`text`,
-`source`, `server_commit`, `status`, and the `sha256` of `text`). The skill's block between the
+`source`, `status`, and `server_text_sha256`, the SHA-256 of `text`, which is the pin). The skill's block between the
 `BEGIN GENERATED: save-routing` and `END GENERATED: save-routing` markers is written from it by
 `node scripts/gen-routing.mjs`; never edit that block by hand. When the server's sentence changes,
-paste the new text into the snapshot, set `server_commit` and `status`, update `sha256` (for example
+paste the new text into the snapshot, set `status`, update `server_text_sha256` (for example
 `printf '%s' "<text>" | sha256sum`), run `node scripts/gen-routing.mjs`, and commit the snapshot and
 SKILL.md together. Run `node scripts/gen-routing.mjs --check` before committing; it exits 1 if they differ.
 Before merging, check the snapshot against the server locally: save the server's `tools/list`

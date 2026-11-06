@@ -19,10 +19,10 @@ export const norm = (s) => String(s).replace(/\s+/g, " ").trim();
 
 export function readSnapshot(path = SNAPSHOT_PATH) {
   const snap = JSON.parse(readFileSync(path, "utf8"));
-  for (const k of ["text", "source", "server_commit", "status", "sha256"]) {
+  for (const k of ["text", "source", "status", "server_text_sha256"]) {
     if (typeof snap[k] !== "string" || snap[k] === "") throw new Error(`${path}: field "${k}" missing or empty`);
   }
   const actual = sha256(snap.text);
-  if (actual !== snap.sha256) throw new Error(`${path}: sha256 ${snap.sha256} does not match text (${actual}); update both together`);
+  if (actual !== snap.server_text_sha256) throw new Error(`${path}: server_text_sha256 ${snap.server_text_sha256} does not match text (${actual}); update both together`);
   return snap;
 }
