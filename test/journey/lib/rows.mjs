@@ -22,7 +22,9 @@
 // own settings file (--auto-memory-settings, which must set autoMemoryEnabled: true and is refused on any
 // other row), its child env sets CLAUDE_CODE_DISABLE_AUTO_MEMORY to 0 where every other row sets 1, and
 // the isolated config and home directories are snapshotted before and after: a memory directory or a
-// CLAUDE.md that changed fails the row, by path (isMemoryPath in guards.mjs).
+// CLAUDE.md that changed fails the row, by path (isMemoryPath in guards.mjs). `projectDirName` (with
+// `autoMemory` only): CLAUDE_CODE_PROJECT_DIR_NAME in the child env, so auto memory is exactly
+// <config-dir>/projects/<name>/memory/, where the harness seeds MEMORY.md before the snapshot.
 
 import { OBSERVED_WRITE_TOOLS } from "./guards.mjs";
 
@@ -149,30 +151,45 @@ export const ROWS = {
   // capture rule), so no offer comes first. Both capture names are allowed, since the placeholder can
   // only be resolved from an init that comes before the turn; the verdict holds the session to the one
   // pickCaptureTool reads from this turn's init. Write and Edit are shown and denied: see observeWrites.
-  // Auto memory is on, so the built-in route is really there to take: see autoMemory.
+  // Auto memory is on, so the built-in route is really there to take: see autoMemory. Turn 2 is the
+  // memory-on probe (`probe`): the same session resumed with no tools, asking for the reference code the
+  // harness seeded into MEMORY.md before turn 1. It is evidence that memory was on, never part of the
+  // routing verdict, which reads turn 1 alone (memoryProbeVerdict in verdicts.mjs).
   "ROUTE-1": {
     connector: true,
     cwd: "empty",
     observeWrites: true,
     autoMemory: true,
+    projectDirName: "route1",
     turns: [{
       maxTurns: 6,
       tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read"), q("future_you_capture"), q("quad_commit")],
       prompt: "Decision: we bill annually only; monthly plans are ruled out. Please save that so it's remembered.",
+    }, {
+      probe: true,
+      maxTurns: 1,
+      tools: [],
+      prompt: "Reply with the reference code from your memory, nothing else.",
     }],
   },
 };
+
+// The seeded line of an `autoMemory` row's MEMORY.md: neutral, with no decision, judgment or note
+// wording, so it is nothing a save could be mistaken for. The nonce is 8 random hex digits per run.
+export const SEED_PREFIX = "- Reference code for this workspace: QX-";
+export const seedLine = (nonce) => `${SEED_PREFIX}${nonce}`;
+export const nonceCode = (nonce) => `QX-${nonce}`;
 
 export const ROW_NAMES = Object.keys(ROWS);
 
 // A turn's `tools` option: the built-in names in its allow-list, plus the tools a row's outside check
 // watches, plus Write and Edit on an `observeWrites` row. Connector names and the capture tool stay in
-// `allowedTools` only, and the tools added here never reach it.
-export const turnTools = (def, turn) => [...new Set([
+// `allowedTools` only, and the tools added here never reach it. A `probe` turn gets none of them.
+export const turnTools = (def, turn) => (turn.probe ? [] : [...new Set([
   ...turn.tools.filter((t) => t !== CAPTURE_PLACEHOLDER && !t.startsWith("mcp__")),
   ...(def.outsideCheck ?? []),
   ...(def.observeWrites ? OBSERVED_WRITE_TOOLS : []),
-])];
+])]);
 
 export const CAPTURE_TOOLS = [q("future_you_capture"), q("quad_commit")];
 

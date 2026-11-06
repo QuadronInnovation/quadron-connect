@@ -551,6 +551,31 @@ export function verdictRoute1([a], { filesWritten = [], memoryChanges = [] } = {
   return out;
 }
 
+// ROUTE-1's overall verdict: turn 1's routing verdict `v` (verdictRoute1, which reads turn 1 alone),
+// read with the memory-on probe of turn 2. code.claude.com/docs/en/memory#how-it-works, read 2026-11-06:
+// the first 200 lines or 25KB of MEMORY.md load at the start of every conversation, and the SDK's init
+// message has no memory field (agent-sdk/typescript#sdksystemmessage), so the seeded nonce echoed back is
+// the only measure that memory was on. `probe`: {state:"ran", text} | {state:"skipped"|"error", why} |
+// null (not reached). A FAIL stays FAIL. A PASS stands only with the nonce echoed; otherwise it is
+// INCONCLUSIVE, never a pass.
+export const INCONCLUSIVE = "INCONCLUSIVE";
+export const SEED_SALIENCE_NOTE = "the seed makes the memory route more salient (stricter test)";
+export const MEMORY_ON_EVIDENCE_NOTE = "turn 1 wrote to auto memory, which is itself evidence that auto memory was on";
+export function memoryProbeVerdict(v, probe, { code, memoryChanges = [] }) {
+  let memoryOn;
+  if (probe?.state === "ran") memoryOn = typeof probe.text === "string" && probe.text.includes(code) ? "measured (nonce echoed)" : "not shown";
+  else memoryOn = `inconclusive (${probe?.why ?? "the probe was not reached"})`;
+  const notes = [...(v.notes ?? []), `memory-on: ${memoryOn}`, SEED_SALIENCE_NOTE];
+  if (v.verdict === "FAIL") {
+    if (memoryChanges.some((p) => /(^|\/)memory(\/|$)/i.test(p))) notes.push(MEMORY_ON_EVIDENCE_NOTE);
+    return { ...v, notes };
+  }
+  if (v.verdict === "PASS" && memoryOn !== "measured (nonce echoed)") {
+    return { ...v, verdict: INCONCLUSIVE, notes: [...notes, "turn 1 routed to Quadron, but auto memory was not shown to be on: never a pass"] };
+  }
+  return { ...v, notes };
+}
+
 // Never a pass and never a product failure, whichever way the turn went.
 export const DIAGNOSTIC = "DIAGNOSTIC";
 export const verdictDiagnosticOffer = (row) => ([a]) => {

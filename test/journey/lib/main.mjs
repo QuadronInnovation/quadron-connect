@@ -120,7 +120,9 @@ function dryReport(f, io, explicit, red) {
     const surface = d.noPlugin ? "; connector only, no plugin or skill" : "";
     const reading = d.diagnostic ? "; diagnostic: never a pass, exit 0 whichever way the turn goes" : "";
     const shown = d.observeWrites ? "; Write and Edit shown and never allowed, so a save to a file is seen and denied" : "";
-    const memory = d.autoMemory ? "; auto memory on, from --auto-memory-settings, with the memory directory and CLAUDE.md watched" : "";
+    const probeTurn = d.turns.findIndex((t) => t.probe) + 1;
+    const memory = d.autoMemory ? `; auto memory on, from --auto-memory-settings, project dir name ${d.projectDirName}, with the memory directory and CLAUDE.md watched` +
+      (probeTurn ? `; turn ${probeTurn} is a memory-on probe with no tools (cap ${d.turns[probeTurn - 1].maxTurns}), asking for the reference code seeded in MEMORY.md` : "") : "";
     out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}${shown}${memory}`);
   }
   out(explicit ? "dry run (explicit)" : "dry run (default: pass --live to run for real)");

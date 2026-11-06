@@ -58,6 +58,11 @@ export const ENV_ALLOWLIST = {
   HOMEPATH: "same, on Windows, only when that directory has a drive",
   [KEY_VAR]: "the one credential the run may use",
   CLAUDE_CONFIG_DIR: "relocates the config directory, set by the harness",
+  // code.claude.com/docs/en/sessions#name-the-project-directory-yourself, read 2026-11-06: "set
+  // CLAUDE_CODE_PROJECT_DIR_NAME alongside CLAUDE_CONFIG_DIR. Claude Code then stores that session's
+  // transcripts and auto memory under your name"; the name is 1-64 letters, digits, hyphens or
+  // underscores, read from the launching environment, and needs Claude Code v2.1.234 or later.
+  CLAUDE_CODE_PROJECT_DIR_NAME: "set by the harness on an `autoMemory` row only, never inherited",
   // code.claude.com/docs/en/agent-sdk/claude-code-features. With no bare mode, this is what keeps auto
   // memory out of a session. A row with `autoMemory` (rows.mjs) gets 0 instead; see AUTO_MEMORY_ON.
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "docs: agent-sdk/claude-code-features, set by the harness to 1, or 0 on an `autoMemory` row only",
@@ -80,7 +85,7 @@ const HOME_VARS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
 // Set here and never inherited, so a parent environment cannot loosen them.
 const FIXED_ON = ["CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
   "CLAUDE_CODE_DISABLE_AGENT_VIEW", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"];
-const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_RETRIES",
+const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PROJECT_DIR_NAME", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_RETRIES",
   "CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "FORCE_PROMPT_CACHING_5M"];
 
 // UNMEASURED until a keyed run: whether the binary and the session work with an empty home, and
@@ -89,12 +94,22 @@ const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_
 // `autoMemory`: the one switch that differs by row. Off (the default) sets CLAUDE_CODE_DISABLE_AUTO_MEMORY
 // to 1 like every fixed switch; on sets it to AUTO_MEMORY_ON, never inherited either way.
 export const AUTO_MEMORY_VAR = "CLAUDE_CODE_DISABLE_AUTO_MEMORY";
-// UNVERIFIED against the docs at this commit: that 0 turns auto memory on rather than only not turning
-// it off. The row's own settings file carries autoMemoryEnabled: true as well (checkSettingsDenyOnly).
+// code.claude.com/docs/en/settings-reference#automemoryenabled, read 2026-11-06: "Per-session
+// overrides: CLAUDE_CODE_DISABLE_AUTO_MEMORY takes precedence over this key for one session, in either
+// direction". That 0 turns auto memory on is a reading of that sentence, not a quoted statement. The
+// row's own settings file carries autoMemoryEnabled: true as well (checkSettingsDenyOnly), and turn 2's
+// probe measures whether memory was on.
 export const AUTO_MEMORY_ON = "0";
-export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMemory = false }) {
+export const PROJECT_DIR_VAR = "CLAUDE_CODE_PROJECT_DIR_NAME";
+export const PROJECT_DIR_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export const PROJECT_DIR_MIN_VERSION = "2.1.234";
+// `projectDirName`: an `autoMemory` row only.
+export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMemory = false, projectDirName }) {
   if (!homeDir) throw new Refusal("no isolated home directory for the child");
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0) throw new Refusal("no output token limit for the child");
+  if (projectDirName !== undefined && (autoMemory !== true || !PROJECT_DIR_NAME_RE.test(projectDirName))) {
+    throw new Refusal("a project directory name needs an autoMemory row and 1-64 letters, digits, hyphens or underscores");
+  }
   const out = {};
   for (const k of Object.keys(ENV_ALLOWLIST)) {
     if (env[k] !== undefined && !HARNESS_VARS.includes(k) && !HOME_VARS.includes(k)) out[k] = env[k];
@@ -109,6 +124,7 @@ export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMe
   if (configDir) out.CLAUDE_CONFIG_DIR = configDir;
   for (const k of FIXED_ON) out[k] = "1";
   if (autoMemory === true) out[AUTO_MEMORY_VAR] = AUTO_MEMORY_ON;
+  if (projectDirName !== undefined) out[PROJECT_DIR_VAR] = projectDirName;
   out.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokens);
   out.CLAUDE_CODE_MAX_RETRIES = "1";
   out.CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES = "0";
@@ -197,13 +213,20 @@ export function assertSessionOptions(options) {
 // options alone and cannot know the row). Off: an env, when given, must set it to 1. On, for an
 // `autoMemory` row only: an env must be given and set it to AUTO_MEMORY_ON. A session with no env is
 // the guard-only check before any form starts, which sends no prompt.
-export function assertAutoMemory(options, autoMemory) {
+// `projectDirName`: the name an `autoMemory` row's env must carry in PROJECT_DIR_VAR; every other
+// session's env must carry none.
+export function assertAutoMemory(options, autoMemory, projectDirName) {
   const env = options?.env;
-  const value = env && typeof env === "object" ? env[AUTO_MEMORY_VAR] : undefined;
+  const hasEnv = Boolean(env) && typeof env === "object";
+  const value = hasEnv ? env[AUTO_MEMORY_VAR] : undefined;
+  const dirName = hasEnv ? env[PROJECT_DIR_VAR] : undefined;
+  const refuse = (why) => new Refusal(`session options refused: ${why}; nothing started`);
   if (autoMemory === true) {
-    if (value !== AUTO_MEMORY_ON) throw new Refusal(`session options refused: ${AUTO_MEMORY_VAR} must be ${AUTO_MEMORY_ON} on an autoMemory row; nothing started`);
-  } else if (env !== undefined && env !== null && value !== "1") {
-    throw new Refusal(`session options refused: ${AUTO_MEMORY_VAR} must be 1 on this row; nothing started`);
+    if (value !== AUTO_MEMORY_ON) throw refuse(`${AUTO_MEMORY_VAR} must be ${AUTO_MEMORY_ON} on an autoMemory row`);
+    if (dirName !== projectDirName) throw refuse(`${PROJECT_DIR_VAR} must be the row's project directory name`);
+  } else if (env !== undefined && env !== null) {
+    if (value !== "1") throw refuse(`${AUTO_MEMORY_VAR} must be 1 on this row`);
+    if (dirName !== undefined) throw refuse(`${PROJECT_DIR_VAR} is for an autoMemory row only`);
   }
 }
 
@@ -381,9 +404,11 @@ export function snapshotTree(dir, fs) {
 }
 
 // On an `autoMemory` row: which changed paths (relative, from changedEntries in live.mjs) are a write to
-// auto memory or to a CLAUDE.md. A path with a directory named `memory` at any depth is the memory
-// directory, wherever under the watched root it sits: the exact location is not pinned here, so any
-// depth counts. A CLAUDE.md or CLAUDE.local.md anywhere counts too. Names only: no file is read.
+// auto memory or to a CLAUDE.md. With CLAUDE_CODE_PROJECT_DIR_NAME set the memory directory is exactly
+// <config-dir>/projects/<name>/memory/ (code.claude.com/docs/en/sessions#name-the-project-directory-yourself,
+// read 2026-11-06: it writes "auto memory to /srv/tenant-a/projects/work/memory/"). The check stays
+// broad anyway: a directory named `memory` at any depth counts, so a binary that ignored the name (older
+// than v2.1.234) is still caught. A CLAUDE.md or CLAUDE.local.md anywhere counts too. Names only.
 export const MEMORY_DIR_NAME = "memory";
 export const CLAUDE_MD_RE = /^CLAUDE(\.local)?\.md$/i;
 export function isMemoryPath(rel) {
