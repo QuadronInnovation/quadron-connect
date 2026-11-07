@@ -14,7 +14,26 @@
 // the plugin in init is a load stop, and Skill in init is only noted. `diagnostic`: the verdict is
 // DIAGNOSTIC, so the row can neither pass nor fail the product, and it adds nothing to the findings.
 // `repeatAfterPass`: a no-write row read on two runs, so a pass does not refuse its second Opus attempt
-// at that head. No flag or override reaches it, and a third attempt still refuses.
+// at that head. No flag or override reaches it, and a third attempt still refuses. `observeWrites`: the
+// built-in Write and Edit join the session's built-in set and leave `disallowedTools`, for this row only,
+// so a save sent to a file instead of the capture tool can be seen. They are never on an allow-list, so
+// dontAsk denies each call: the attempt is what the verdict reads. See OBSERVED_WRITE_TOOLS in guards.mjs.
+// `autoMemory`: Claude Code's built-in auto memory is on for this row only. Its session loads the row's
+// own settings file (--auto-memory-settings, which must set autoMemoryEnabled: true and is refused on any
+// other row), its child env sets CLAUDE_CODE_DISABLE_AUTO_MEMORY to 0 where every other row sets 1, and
+// the isolated config and home directories are snapshotted before and after: a memory directory or a
+// CLAUDE.md that changed fails the row, by path (isMemoryPath in guards.mjs). `projectDirName` (with
+// `autoMemory` only): CLAUDE_CODE_PROJECT_DIR_NAME in the child env, so auto memory is exactly
+// <config-dir>/projects/<name>/memory/, where the harness seeds MEMORY.md before the snapshot. Each
+// `autoMemory` row has its own `projectDirName`. `memoryOff` (a routing row only, never with `autoMemory`):
+// marks a ROUTE-1 variant run with auto memory off, as on every row without `autoMemory`. It changes no
+// session option: it adds the memory-off note to the verdict (VERDICTS in verdicts.mjs) and the dry-run line.
+//
+// Routing row names: ROUTE-1 is the original row; a variant is ROUTE-1-<WORDING>-<ON|OFF>, where ON has
+// `autoMemory` and OFF has `memoryOff`. ROUTE-1-OFF is ROUTE-1's own prompt with memory off; ROUTE-1-RECORD
+// and ROUTE-1-QUADRON run with memory on only, and ROUTE-1-QUADRON is the control that names Quadron.
+
+import { OBSERVED_WRITE_TOOLS } from "./guards.mjs";
 
 const q = (t) => `mcp__quadron__${t}`;
 export const CAPTURE_PLACEHOLDER = "<captureTool>";
@@ -31,6 +50,23 @@ export const ISSUE2_OFFER_PHRASE = "raw streams";
 export const NEUTRAL_OFFER_PHRASE = "annual pricing";
 
 const T4_DECISION_PROMPT = "Decision: the Claude Code plugin ships recall only; capture happens through the capture tool with my approval, never from a hook. Project: quadron-connect.";
+
+// The routing rows: one decision sentence, then the row's ask. See ROUTE-1 below.
+export const ROUTE_DECISION = "Decision: we bill annually only; monthly plans are ruled out.";
+const ROUTE_PROBE_PROMPT = "Reply with the reference code from your memory, nothing else.";
+const routeTurn = (ask) => ({
+  maxTurns: 6,
+  tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall"), q("quad_read"), q("future_you_capture"), q("quad_commit")],
+  prompt: `${ROUTE_DECISION} ${ask}`,
+});
+// Memory on: ROUTE-1's shape, with its own project directory name, and turn 2 the memory-on probe.
+const routeOn = (projectDirName, ask) => ({
+  connector: true, cwd: "empty", observeWrites: true, autoMemory: true, projectDirName,
+  turns: [routeTurn(ask), { probe: true, maxTurns: 1, tools: [], prompt: ROUTE_PROBE_PROMPT }],
+});
+// Memory off: one turn. With memory off the seeded nonce cannot be echoed, so there is no probe turn.
+const routeOff = (ask) => ({ connector: true, cwd: "empty", observeWrites: true, memoryOff: true, turns: [routeTurn(ask)] });
+const ROUTE_ASK = "Please save that so it's remembered.";
 
 export const ROWS = {
   T2: {
@@ -134,16 +170,50 @@ export const ROWS = {
       prompt: T4_DECISION_PROMPT,
     }],
   },
+  // Routing: asked to save, with no Quadron or project cue, the save goes to the capture tool and not
+  // to a file. One turn: an explicit request to save that specific thing is the yes (the skill's
+  // capture rule), so no offer comes first. Both capture names are allowed, since the placeholder can
+  // only be resolved from an init that comes before the turn; the verdict holds the session to the one
+  // pickCaptureTool reads from this turn's init. Write and Edit are shown and denied: see observeWrites.
+  // Auto memory is on, so the built-in route is really there to take: see autoMemory. Turn 2 is the
+  // memory-on probe (`probe`): the same session resumed with no tools, asking for the reference code the
+  // harness seeded into MEMORY.md before turn 1. It is evidence that memory was on, never part of the
+  // routing verdict, which reads turn 1 alone (memoryProbeVerdict in verdicts.mjs).
+  "ROUTE-1": routeOn("route1", ROUTE_ASK),
+  // The variants: the same decision sentence, so save routing can be compared with auto memory on and
+  // off and across save wordings. None names Quadron, quad, a project or a record, except ROUTE-1-RECORD
+  // ("record" only) and the control ROUTE-1-QUADRON, which names Quadron. An OFF row reads turn 1 with
+  // verdictRoute1 and never the probe; see memoryOff above.
+  "ROUTE-1-OFF": routeOff(ROUTE_ASK),
+  "ROUTE-1-SAVE-ON": routeOn("route1-save", "Save that."),
+  "ROUTE-1-SAVE-OFF": routeOff("Save that."),
+  "ROUTE-1-REMEMBER-ON": routeOn("route1-remember", "Remember that."),
+  "ROUTE-1-REMEMBER-OFF": routeOff("Remember that."),
+  "ROUTE-1-RECORD": routeOn("route1-record", "Save that to my record."),
+  "ROUTE-1-QUADRON": routeOn("route1-quadron", "Save that to Quadron."),
 };
 
+// The seeded line of an `autoMemory` row's MEMORY.md: neutral, with no decision, judgment or note
+// wording, so it is nothing a save could be mistaken for. The nonce is 8 random hex digits per run.
+export const SEED_PREFIX = "- Reference code for this workspace: QX-";
+export const seedLine = (nonce) => `${SEED_PREFIX}${nonce}`;
+export const nonceCode = (nonce) => `QX-${nonce}`;
+
 export const ROW_NAMES = Object.keys(ROWS);
+// The rows a command can run a session for, and the ones that take --auto-memory-settings.
+export const SESSION_ROW_NAMES = ROW_NAMES.filter((r) => !ROWS[r].noSession);
+export const AUTO_MEMORY_ROW_NAMES = ROW_NAMES.filter((r) => ROWS[r].autoMemory === true);
+// Every routing row: ROUTE-1 and its variants, all read by verdictRoute1.
+export const ROUTE_ROW_NAMES = ROW_NAMES.filter((r) => r === "ROUTE-1" || r.startsWith("ROUTE-1-"));
 
 // A turn's `tools` option: the built-in names in its allow-list, plus the tools a row's outside check
-// watches. Connector names and the capture tool stay in `allowedTools` only.
-export const turnTools = (def, turn) => [...new Set([
+// watches, plus Write and Edit on an `observeWrites` row. Connector names and the capture tool stay in
+// `allowedTools` only, and the tools added here never reach it. A `probe` turn gets none of them.
+export const turnTools = (def, turn) => (turn.probe ? [] : [...new Set([
   ...turn.tools.filter((t) => t !== CAPTURE_PLACEHOLDER && !t.startsWith("mcp__")),
   ...(def.outsideCheck ?? []),
-])];
+  ...(def.observeWrites ? OBSERVED_WRITE_TOOLS : []),
+])]);
 
 export const CAPTURE_TOOLS = [q("future_you_capture"), q("quad_commit")];
 

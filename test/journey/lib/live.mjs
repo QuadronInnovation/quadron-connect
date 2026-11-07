@@ -2,9 +2,10 @@
 // Reached only from the live branch of main.mjs, which has done the environment and settings checks.
 
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 
 import {
-  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, readHead, scanToolUses, snapshotTree, toleratedInitTools,
+  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, PROJECT_DIR_MIN_VERSION, assertAutoMemory, versionAtLeast, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, isMemoryPath, readHead, scanToolUses, snapshotTree, toleratedInitTools,
 } from "./guards.mjs";
 import {
   SpendTracker, MAX_OUTPUT_TOKENS, NOT_SHOWN, appendEntry, bindLimit, checkAttempts, checkLedgerMatchesRecord, closeCall, ledgerLimit, markConfirmed,
@@ -13,9 +14,9 @@ import {
 import { appendLimit, appendReservation, appendSettlement, readRecord, recordModelTotal, recordTotal } from "./campaign.mjs";
 import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./connector.mjs";
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
-import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, pickCaptureTool, turnTools } from "./rows.mjs";
+import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, nonceCode, pickCaptureTool, seedLine, turnTools } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
-import { VERDICTS, collect, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
+import { INCONCLUSIVE, VERDICTS, collect, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
 import { runGatedCall } from "./call.mjs";
 import { Evidence, newUniqueDir } from "./evidence.mjs";
@@ -31,6 +32,29 @@ const outputLimit = (f) => (f["max-output-tokens"] === undefined ? MAX_OUTPUT_TO
 
 function hygiene(dirs, fs) {
   return dirs.flatMap((d) => credentialFilesIn(d, fs));
+}
+
+// The relative paths that differ between two snapshotTree lists: added, changed or gone.
+export function changedEntries(before, after) {
+  const name = (e) => e.replace(/\|.*$/, "");
+  const a = new Set(before), b = new Set(after);
+  return [...new Set([...after.filter((e) => !a.has(e)), ...before.filter((e) => !b.has(e))].map(name))].sort();
+}
+
+// An `autoMemory` row's watched roots: the isolated config directory (CLAUDE_CONFIG_DIR) and the
+// isolated home, both made or checked empty by this harness, never the real user's. Each label stands
+// in for the path in what is printed.
+const memoryRoots = (f, homeDir) => [["config-dir", f["config-dir"]], ["home", homeDir]];
+// The exact auto-memory file under CLAUDE_CODE_PROJECT_DIR_NAME (see isMemoryPath in guards.mjs).
+const memoryFile = (f, name) => path.join(f["config-dir"], "projects", name, "memory", "MEMORY.md");
+// Whether the seeded line is still in the file, exactly, as one line.
+export function seedIntact(file, line, fs) {
+  try { return fs.readFileSync(file, "utf8").split(/\r?\n/).includes(line); } catch { return false; }
+}
+export const snapshotMemoryRoots = (roots, fs) => roots.map(([label, dir]) => [label, snapshotTree(dir, fs)]);
+// The changed paths under those roots that are auto memory or a CLAUDE.md, as `<label>/<relative path>`.
+export function memoryChangesBetween(before, after) {
+  return before.flatMap(([label, b], i) => changedEntries(b, after[i][1]).filter(isMemoryPath).map((p) => `${label}/${p}`));
 }
 
 function rowSecondsFrom(f) {
@@ -122,6 +146,7 @@ const streamFacts = (call, s) => ({
 function sessionOptions(ctx, args) {
   const options = (ctx.testOptionsHook ?? ((o) => o))(buildOptions(args));
   assertSessionOptions(options);
+  assertAutoMemory(options, args.autoMemory === true, args.projectDirName);
   return options;
 }
 // Refuses before any form creates a directory, takes a lock, mints a token or loads the SDK.
@@ -313,11 +338,34 @@ async function rowAttempt(ctx, def) {
     io.err("could not create the evidence directory: no call made");
     return { exitCode: EXIT.STOPPED, evidenceFailed: true };
   }
-  const childEnv = buildChildEnv(env, { configDir: f["config-dir"], homeDir, maxOutputTokens: budget.maxOutputTokens });
+  const autoMemory = def.autoMemory === true;
+  const projectDirName = autoMemory ? def.projectDirName : undefined;
+  const childEnv = buildChildEnv(env, { configDir: f["config-dir"], homeDir, maxOutputTokens: budget.maxOutputTokens, autoMemory, projectDirName });
+  // An `autoMemory` row loads its own settings file, checked in main.mjs; every other row loads --settings.
+  const settingsPath = autoMemory ? f["auto-memory-settings"] : f.settings;
+  if (!settingsPath) throw new Refusal("no settings file for this row");
+  // The seed: one neutral MEMORY.md line with a fresh nonce, written before the snapshot so it is the
+  // baseline and never counted as a change. Turn 2's probe asks for it back.
+  let seed = null;
+  if (autoMemory && projectDirName) {
+    const nonce = randomBytes(4).toString("hex");
+    seed = { projectDirName, nonce, line: seedLine(nonce), code: nonceCode(nonce), file: memoryFile(f, projectDirName) };
+    try {
+      fs.mkdirSync(path.dirname(seed.file), { recursive: true });
+      fs.writeFileSync(seed.file, `${seed.line}\n`);
+    } catch {
+      io.err("could not seed the auto-memory file: no call made");
+      return { exitCode: EXIT.STOPPED };
+    }
+  }
+  // Auto memory and CLAUDE.md in the isolated config and home directories, before the row.
+  const beforeMemory = autoMemory ? snapshotMemoryRoots(memoryRoots(f, homeDir), fs) : null;
   // The clone must stay clean. This shows whether a child touched it; it cannot prevent that. T5's
   // working directory is the plugin directory, which is normally inside the clone.
   const beforeClone = snapshotTree(repoRoot, fs);
   const beforeTree = def.cwd === "plugin" ? snapshotTree(cwd, fs) : null;
+  // An `observeWrites` row's working directory is new and empty: anything in it afterwards was written there.
+  const beforeCwd = def.observeWrites ? snapshotTree(cwd, fs) : null;
 
   const summary = {
     partial: false, row, model: f.model, effort: f.effort, mode: "not bare",
@@ -350,22 +398,41 @@ async function rowAttempt(ctx, def) {
   let rowTimer;
   const deadline = new Promise((r) => { rowTimer = setTimeout(r, rowSeconds * 1000); });
 
+  // The routing verdict reads turn 1's diff alone, so the trees are read again before any later turn.
+  let afterTurn1 = null;
+  const takeAfterTurn1 = () => {
+    if (afterTurn1) return;
+    afterTurn1 = { cwd: beforeCwd ? snapshotTree(cwd, fs) : null, memory: beforeMemory ? snapshotMemoryRoots(memoryRoots(f, homeDir), fs) : null };
+  };
+  // The memory-on probe (a `probe` turn): {state:"ran", text} | {state:"skipped"|"error", why}. A probe
+  // that cannot run or goes wrong makes the row INCONCLUSIVE (memoryProbeVerdict), not a stop.
+  let probe = null;
+  const probeError = (why) => { probe = { state: "error", why }; summary.notes.push(why); };
+
   try {
     for (const [i, turn] of def.turns.entries()) {
+      if (i > 0) takeAfterTurn1();
+      // No spend on a probe whose seed is gone: turn 1 already fails for the memory change.
+      if (turn.probe && !(seed && seedIntact(seed.file, seed.line, fs))) {
+        probe = { state: "skipped", why: "turn 1 rewrote or removed the seeded line, so the probe was skipped" };
+        break;
+      }
       const allowedTools = turn.tools.map((t) => (t === CAPTURE_PLACEHOLDER ? captureTool ?? pickCaptureTool(null) : t));
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
-        resume: i > 0 ? sessionId : undefined, settingsPath: f.settings, pluginDir: f["plugin-dir"],
-        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin),
+        resume: i > 0 ? sessionId : undefined, settingsPath, pluginDir: f["plugin-dir"],
+        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin), observeWrites: Boolean(def.observeWrites), autoMemory, projectDirName,
       });
 
       let can, entry;
       try {
         can = checkCall(ctx, budget, measuredTokens);
+        if (!can.ok && turn.probe) { probe = { state: "skipped", why: `the probe's worst case would pass the ${can.reason}, so it was skipped` }; break; }
         if (!can.ok) { stop(`the next call's worst case would pass the ${can.reason}`, EXIT.STOPPED); break; }
         entry = reserveCall(ctx, ledger, can.worst, { id: `${path.basename(evidence.dir)}-${i + 1}`, row, turn: i + 1, head });
       } catch (e) {
         if (!(e instanceof Refusal)) throw e;
+        if (turn.probe) { probe = { state: "skipped", why: `the probe was refused before its call: ${red.text(e.message)}` }; break; }
         stop(red.text(e.message), EXIT.STOPPED);
         break;
       }
@@ -428,6 +495,21 @@ async function rowAttempt(ctx, def) {
         summary.verdict = LOAD_FAILURE; // not a product result: never a finding
         break;
       }
+      if (seed && i === 0 && s.init?.claude_code_version && !versionAtLeast(s.init.claude_code_version, PROJECT_DIR_MIN_VERSION)) {
+        summary.notes.push(`CLAUDE_CODE_PROJECT_DIR_NAME needs Claude Code v${PROJECT_DIR_MIN_VERSION} or later; init shows ${s.init.claude_code_version}, so the seed may not be the memory loaded`);
+      }
+      // On the probe, what would stop a routing turn is a probe error: the row is INCONCLUSIVE, after its spend is settled above.
+      if (turn.probe) {
+        const why = call.timedOut ? `the probe timed out after the row's ${rowSeconds} seconds`
+          : call.gate ? `the probe failed a gate: ${call.gate.message}`
+          : call.error ? `the probe call failed: ${red.text(call.error?.message ?? call.error)}`
+          : noCost ? "the probe ended without a reported cost; it stays at its reservation"
+          : s.cut_off ? "the probe's response was cut off at the output limit"
+          : !s.result ? "the probe had no result"
+          : s.result.subtype !== "success" ? `the probe result was ${s.result.subtype}`
+          : null;
+        if (why && !(entry.spend > can.worst.reservationUsd + 1e-9)) { probeError(why); break; }
+      }
       if (call.timedOut) { stop(`row timeout after ${rowSeconds} seconds`, EXIT.STOPPED); break; }
       if (call.gate) {
         summary.notes.push(call.gate.message);
@@ -462,27 +544,41 @@ async function rowAttempt(ctx, def) {
           io.out(absent);
         }
       }
+      if (turn.probe) probe = { state: "ran", text: typeof s.result?.result === "string" ? s.result.result : (s.assistant_text ?? "") };
     }
   } finally {
     clearTimeout(rowTimer);
   }
 
-  // ---- verdict
+  // ---- verdict: turn 1's tool calls and turn 1's diff
+  takeAfterTurn1();
+  const memoryChanges = beforeMemory ? memoryChangesBetween(beforeMemory, afterTurn1.memory) : [];
   if (authFailed) {
     summary.verdict = "auth failure";
     summary.partial = true;
     summary.stoppedBecause = "auth failure";
     exitCode = EXIT.AUTH;
   } else if (summary.verdict === null && !summary.partial) {
-    const v = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording });
+    const filesWritten = beforeCwd ? changedEntries(beforeCwd, afterTurn1.cwd) : [];
+    const routed = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, memoryChanges });
+    // Only an `autoMemory` row has a seed, so every ON routing row is read with its probe and a
+    // `memoryOff` row (one turn, no probe) never is: its verdict is turn 1's alone.
+    const v = seed ? memoryProbeVerdict(routed, probe, { code: seed.code, memoryChanges }) : routed;
     summary.verdict = v.verdict;
     summary.notes.push(...(v.notes ?? []));
     for (const k of ["judgmentId", "savedWording", "signedClaim", "routing", "quadName", "citesProject", "offerSentence"]) if (v[k] !== undefined) summary[k] = v[k];
     // DIAGNOSTIC is neither of these, so it leaves the exit code where the row got it.
-    if (v.verdict === "FAIL" || v.verdict === "WITHHELD" || v.verdict === "UNCONFIRMED") exitCode = EXIT.ROWS_FAILED;
+    if (v.verdict === "FAIL" || v.verdict === "WITHHELD" || v.verdict === "UNCONFIRMED" || v.verdict === INCONCLUSIVE) exitCode = EXIT.ROWS_FAILED;
     if (v.verdict === "BLOCKED-BY-BACKEND") exitCode = EXIT.BLOCKED;
   }
   if (summary.partial && summary.verdict === null) summary.verdict = "PARTIAL (not a result)";
+  // The run evidence of the memory-on probe: the seeded line, its nonce, and what the probe did.
+  if (seed) {
+    summary.memoryProbe = {
+      projectDirName: seed.projectDirName, nonce: seed.nonce, seedLine: seed.line, state: probe?.state ?? "not reached",
+      ...(probe?.why ? { why: probe.why } : {}), ...(probe?.state === "ran" ? { echoed: probe.text.includes(seed.code) } : {}),
+    };
+  }
 
   summary.quadContextCalls = quadContextCalls(streams);
   summary.captureAttempts = streams.flatMap((s) => s.denied_captures);
@@ -517,12 +613,14 @@ async function rowAttempt(ctx, def) {
   if (cred.length) hygieneFailures.push(`credential-named file in the config or home directory: ${cred.length}`);
   if (JSON.stringify(snapshotTree(repoRoot, fs)) !== JSON.stringify(beforeClone)) hygieneFailures.push("the clone changed during the row");
   if (beforeTree && JSON.stringify(snapshotTree(cwd, fs)) !== JSON.stringify(beforeTree)) hygieneFailures.push("the plugin directory changed during the row");
+  // A row stopped before its verdict still says so: the verdict above reads the same list.
+  if (memoryChanges.length && summary.partial) hygieneFailures.push(`auto memory or CLAUDE.md changed: ${memoryChanges.join(", ")}`);
   for (const h of hygieneFailures) {
     summary.notes.push(h);
     io.out(`hygiene failure: ${h}`);
   }
   if (hygieneFailures.length && !authFailed) {
-    if (/^PASS/.test(summary.verdict ?? "")) summary.verdict = "FAIL";
+    if (/^PASS/.test(summary.verdict ?? "") || summary.verdict === INCONCLUSIVE) summary.verdict = "FAIL";
     if (exitCode === EXIT.OK) exitCode = EXIT.ROWS_FAILED;
   }
 

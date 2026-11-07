@@ -58,9 +58,14 @@ export const ENV_ALLOWLIST = {
   HOMEPATH: "same, on Windows, only when that directory has a drive",
   [KEY_VAR]: "the one credential the run may use",
   CLAUDE_CONFIG_DIR: "relocates the config directory, set by the harness",
+  // code.claude.com/docs/en/sessions#name-the-project-directory-yourself, read 2026-11-06: "set
+  // CLAUDE_CODE_PROJECT_DIR_NAME alongside CLAUDE_CONFIG_DIR. Claude Code then stores that session's
+  // transcripts and auto memory under your name"; the name is 1-64 letters, digits, hyphens or
+  // underscores, read from the launching environment, and needs Claude Code v2.1.234 or later.
+  CLAUDE_CODE_PROJECT_DIR_NAME: "set by the harness on an `autoMemory` row only, never inherited",
   // code.claude.com/docs/en/agent-sdk/claude-code-features. With no bare mode, this is what keeps auto
-  // memory out of a session.
-  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "docs: agent-sdk/claude-code-features, set by the harness to 1",
+  // memory out of a session. A row with `autoMemory` (rows.mjs) gets 0 instead; see AUTO_MEMORY_ON.
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "docs: agent-sdk/claude-code-features, set by the harness to 1, or 0 on an `autoMemory` row only",
   CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: "set by the harness to 1: no built-in sub-agents in a session",
   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "set by the harness to 1: nothing runs behind a turn",
   CLAUDE_CODE_DISABLE_AGENT_VIEW: "set by the harness to 1: no agent view",
@@ -80,14 +85,31 @@ const HOME_VARS = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
 // Set here and never inherited, so a parent environment cannot loosen them.
 const FIXED_ON = ["CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
   "CLAUDE_CODE_DISABLE_AGENT_VIEW", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"];
-const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_RETRIES",
+const HARNESS_VARS = ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PROJECT_DIR_NAME", ...FIXED_ON, "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_RETRIES",
   "CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "FORCE_PROMPT_CACHING_5M"];
 
 // UNMEASURED until a keyed run: whether the binary and the session work with an empty home, and
 // whether pointing these variables at it keeps every read and write away from the real home.
-export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens }) {
+//
+// `autoMemory`: the one switch that differs by row. Off (the default) sets CLAUDE_CODE_DISABLE_AUTO_MEMORY
+// to 1 like every fixed switch; on sets it to AUTO_MEMORY_ON, never inherited either way.
+export const AUTO_MEMORY_VAR = "CLAUDE_CODE_DISABLE_AUTO_MEMORY";
+// code.claude.com/docs/en/settings-reference#automemoryenabled, read 2026-11-06: "Per-session
+// overrides: CLAUDE_CODE_DISABLE_AUTO_MEMORY takes precedence over this key for one session, in either
+// direction". That 0 turns auto memory on is a reading of that sentence, not a quoted statement. The
+// row's own settings file carries autoMemoryEnabled: true as well (checkSettingsDenyOnly), and turn 2's
+// probe measures whether memory was on.
+export const AUTO_MEMORY_ON = "0";
+export const PROJECT_DIR_VAR = "CLAUDE_CODE_PROJECT_DIR_NAME";
+export const PROJECT_DIR_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export const PROJECT_DIR_MIN_VERSION = "2.1.234";
+// `projectDirName`: an `autoMemory` row only.
+export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMemory = false, projectDirName }) {
   if (!homeDir) throw new Refusal("no isolated home directory for the child");
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0) throw new Refusal("no output token limit for the child");
+  if (projectDirName !== undefined && (autoMemory !== true || !PROJECT_DIR_NAME_RE.test(projectDirName))) {
+    throw new Refusal("a project directory name needs an autoMemory row and 1-64 letters, digits, hyphens or underscores");
+  }
   const out = {};
   for (const k of Object.keys(ENV_ALLOWLIST)) {
     if (env[k] !== undefined && !HARNESS_VARS.includes(k) && !HOME_VARS.includes(k)) out[k] = env[k];
@@ -101,6 +123,8 @@ export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens }) {
   }
   if (configDir) out.CLAUDE_CONFIG_DIR = configDir;
   for (const k of FIXED_ON) out[k] = "1";
+  if (autoMemory === true) out[AUTO_MEMORY_VAR] = AUTO_MEMORY_ON;
+  if (projectDirName !== undefined) out[PROJECT_DIR_VAR] = projectDirName;
   out.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokens);
   out.CLAUDE_CODE_MAX_RETRIES = "1";
   out.CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES = "0";
@@ -150,10 +174,15 @@ export const fastModeStatedOff = (init) => init?.fast_mode_state === "off";
 const SETTINGS_KEYS = ["$schema", "permissions", "fastMode"];
 const SETTINGS_PERMISSION_KEYS = ["deny", "allow"];
 const isPlainObject = (o) => Boolean(o) && typeof o === "object" && !Array.isArray(o);
-export function checkSettingsDenyOnly(settings) {
+// `autoMemory`: the check for an `autoMemory` row's own settings file (--auto-memory-settings), which
+// must also carry autoMemoryEnabled: true and nothing else beyond these keys. Every other file refuses it.
+export const AUTO_MEMORY_SETTING = "autoMemoryEnabled";
+export function checkSettingsDenyOnly(settings, { autoMemory = false } = {}) {
   const refuse = (what) => new Refusal(`the settings file may carry only deny rules: ${what}; refusing`);
   if (!isPlainObject(settings)) throw refuse("it is not an object");
-  for (const k of Object.keys(settings)) if (!SETTINGS_KEYS.includes(k)) throw refuse(`it contains ${k}`);
+  const keys = autoMemory ? [...SETTINGS_KEYS, AUTO_MEMORY_SETTING] : SETTINGS_KEYS;
+  for (const k of Object.keys(settings)) if (!keys.includes(k)) throw refuse(`it contains ${k}`);
+  if (autoMemory && settings[AUTO_MEMORY_SETTING] !== true) throw new Refusal(`the auto-memory settings file must set ${AUTO_MEMORY_SETTING} to true; refusing`);
   if (!Object.prototype.hasOwnProperty.call(settings, "permissions")) return;
   const { permissions } = settings;
   if (!isPlainObject(permissions)) throw refuse("permissions is not an object");
@@ -170,12 +199,35 @@ function sessionOptionFault(o) {
   if (o?.strictMcpConfig !== true) return "strictMcpConfig must be true";
   if (typeof o?.settings !== "string" || !o.settings) return "settings must be a non-empty string";
   if (!Array.isArray(o?.tools)) return "tools must be an array";
+  // A disallowed name is never approved, on any row: Write and Edit on an `observeWrites` row are shown, not allowed.
+  if (Array.isArray(o?.allowedTools) && o.allowedTools.some((t) => DISALLOWED_TOOLS.includes(t))) return "allowedTools must not name a disallowed tool";
   if (o?.extraArgs !== undefined && o?.extraArgs !== null && "bare" in Object(o.extraArgs)) return "extraArgs must not carry bare";
   return null;
 }
 export function assertSessionOptions(options) {
   const fault = sessionOptionFault(options);
   if (fault) throw new Refusal(`session options refused: ${fault}; nothing started`);
+}
+
+// The per-row check on a session's auto-memory switch, beside assertSessionOptions (which reads the
+// options alone and cannot know the row). Off: an env, when given, must set it to 1. On, for an
+// `autoMemory` row only: an env must be given and set it to AUTO_MEMORY_ON. A session with no env is
+// the guard-only check before any form starts, which sends no prompt.
+// `projectDirName`: the name an `autoMemory` row's env must carry in PROJECT_DIR_VAR; every other
+// session's env must carry none.
+export function assertAutoMemory(options, autoMemory, projectDirName) {
+  const env = options?.env;
+  const hasEnv = Boolean(env) && typeof env === "object";
+  const value = hasEnv ? env[AUTO_MEMORY_VAR] : undefined;
+  const dirName = hasEnv ? env[PROJECT_DIR_VAR] : undefined;
+  const refuse = (why) => new Refusal(`session options refused: ${why}; nothing started`);
+  if (autoMemory === true) {
+    if (value !== AUTO_MEMORY_ON) throw refuse(`${AUTO_MEMORY_VAR} must be ${AUTO_MEMORY_ON} on an autoMemory row`);
+    if (dirName !== projectDirName) throw refuse(`${PROJECT_DIR_VAR} must be the row's project directory name`);
+  } else if (env !== undefined && env !== null) {
+    if (value !== "1") throw refuse(`${AUTO_MEMORY_VAR} must be 1 on this row`);
+    if (dirName !== undefined) throw refuse(`${PROJECT_DIR_VAR} is for an autoMemory row only`);
+  }
 }
 
 // -------------------------------------------------------------- web and browser tool restrictions
@@ -193,6 +245,10 @@ export const SDK_PACKAGE_DENY = ["Read(//**/node_modules/@anthropic-ai/**)", "Ed
 // Monitor, WebFetch, WebSearch, RemoteTrigger, Workflow. The fixed `tools` list and the load check
 // on init cover the rest of that table.
 export const DISALLOWED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Monitor", "RemoteTrigger", "Workflow", "WebFetch", "WebSearch", ...SUBAGENT_TOOLS, ...SDK_PACKAGE_DENY];
+// The only disallowed names a row may show, and only a row with `observeWrites` (rows.mjs): they leave
+// `disallowedTools` and join `tools`, never `allowedTools`, which sessionOptionFault refuses. Under dontAsk
+// with no allow rule each call is denied, so nothing is written and the attempt shows in the stream.
+export const OBSERVED_WRITE_TOOLS = ["Write", "Edit"];
 export const LIFTABLE = ["settings_deny", "init_scan", "tool_use_scan"]; // never "library"
 export const OVERRIDE_MAX_MINUTES = 240;
 
@@ -239,11 +295,13 @@ export function toleratedInitTools(listed, { connector = false, initForm = false
 }
 
 // Init tools to refuse: everything outside the turn's `tools`, the connector's names and the tolerated
-// list, and any disallowed name even if a turn's `tools` held it. The init_scan lift excuses only what
-// scanInitTools catches, so a shell tool is never excused.
-export function unexpectedInitTools(listed, turnTools, lifted = [], tolerated = []) {
+// list, and any disallowed name even if a turn's `tools` held it, except an `observed` name the turn's
+// `tools` holds: OBSERVED_WRITE_TOOLS, passed on an `observeWrites` row only. The init_scan lift excuses
+// only what scanInitTools catches, so a shell tool is never excused.
+export function unexpectedInitTools(listed, turnTools, lifted = [], tolerated = [], observed = []) {
   const excused = (t) => lifted.includes("init_scan") && scanInitTools([t]).length > 0;
-  const allowed = (t) => (turnTools.includes(t) && !DISALLOWED_TOOLS.includes(t)) || (typeof t === "string" && t.startsWith("mcp__quadron__")) || tolerated.includes(t);
+  const shown = (t) => OBSERVED_WRITE_TOOLS.includes(t) && observed.includes(t);
+  const allowed = (t) => (turnTools.includes(t) && (!DISALLOWED_TOOLS.includes(t) || shown(t))) || (typeof t === "string" && t.startsWith("mcp__quadron__")) || tolerated.includes(t);
   return (listed ?? []).filter((t) => !allowed(t) && !excused(t));
 }
 
@@ -343,6 +401,21 @@ export function snapshotTree(dir, fs) {
   };
   walk(dir, "");
   return out.sort();
+}
+
+// On an `autoMemory` row: which changed paths (relative, from changedEntries in live.mjs) are a write to
+// auto memory or to a CLAUDE.md. With CLAUDE_CODE_PROJECT_DIR_NAME set the memory directory is exactly
+// <config-dir>/projects/<name>/memory/ (code.claude.com/docs/en/sessions#name-the-project-directory-yourself,
+// read 2026-11-06: it writes "auto memory to /srv/tenant-a/projects/work/memory/"). The check stays
+// broad anyway: a directory named `memory` at any depth counts, so a binary that ignored the name (older
+// than v2.1.234) is still caught. A CLAUDE.md or CLAUDE.local.md anywhere counts too. Names only.
+export const MEMORY_DIR_NAME = "memory";
+export const CLAUDE_MD_RE = /^CLAUDE(\.local)?\.md$/i;
+export function isMemoryPath(rel) {
+  const parts = String(rel).replace(/\\/g, "/").replace(/\/+$/, "").split("/").filter(Boolean);
+  if (!parts.length) return false;
+  if (CLAUDE_MD_RE.test(parts[parts.length - 1])) return true;
+  return parts.some((p) => p.toLowerCase() === MEMORY_DIR_NAME);
 }
 
 // -------------------------------------------------------------- head of the clone

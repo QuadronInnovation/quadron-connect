@@ -26,6 +26,8 @@ export const SOME_HOME = "/home/someone";
 const SDK_NAME = ["@anthropic-ai", "claude-agent-sdk"];
 
 export const goodSettings = () => ({ permissions: { deny: ["WebFetch", "WebSearch", "Bash(*playwright*)"] } });
+// An `autoMemory` row's own settings file (--auto-memory-settings).
+export const autoMemorySettings = () => ({ ...goodSettings(), autoMemoryEnabled: true });
 
 const roots = [];
 process.on("exit", () => { for (const r of roots) { try { nodefs.rmSync(r, { recursive: true, force: true }); } catch { /* best effort */ } } });
@@ -45,6 +47,7 @@ export function box({ settings = goodSettings(), entries = [], record = [] } = {
   for (const d of ["repo/.git", "cfg", "out", "plugin", "tmp"]) nodefs.mkdirSync(p(d), { recursive: true });
   nodefs.writeFileSync(p("repo/.git/HEAD"), `${HEAD}\n`);
   nodefs.writeFileSync(p("settings.json"), typeof settings === "string" ? settings : JSON.stringify(settings));
+  nodefs.writeFileSync(p("auto-memory-settings.json"), JSON.stringify(autoMemorySettings()));
   nodefs.writeFileSync(p("ledger.json"), JSON.stringify({ entries }));
   nodefs.writeFileSync(p("campaign.jsonl"), record.map((l) => `${JSON.stringify(l)}\n`).join(""));
   nodefs.writeFileSync(p("plugin/SKILL.md"), "skill");
@@ -55,7 +58,7 @@ export function box({ settings = goodSettings(), entries = [], record = [] } = {
 
   const b = {
     root, p,
-    ledger: p("ledger.json"), out: p("out"), cfg: p("cfg"), plugin: p("plugin"), settings: p("settings.json"), repo: p("repo"), journey,
+    ledger: p("ledger.json"), out: p("out"), cfg: p("cfg"), plugin: p("plugin"), settings: p("settings.json"), autoMemorySettings: p("auto-memory-settings.json"), repo: p("repo"), journey,
     record: p("campaign.jsonl"),
     campaign: { QUADRON_CAMPAIGN_RECORD: p("campaign.jsonl"), QUADRON_CAMPAIGN_WORKSPACE: WORKSPACE, QUADRON_CAMPAIGN_ID: CAMPAIGN },
     recordLines: () => nodefs.readFileSync(p("campaign.jsonl"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)),

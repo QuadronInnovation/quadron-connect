@@ -2,7 +2,7 @@
 // (sdk.d.ts:6234), assistant tool_use blocks, user tool_result blocks with the optional structured
 // tool_use_result (:6587, unknown-typed), result (:5960-5981).
 
-import { CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool } from "./rows.mjs";
+import { CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool } from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
 
 const REVIEW_PENDING_RE = /Saved for your review/;
@@ -504,6 +504,88 @@ export const verdictOfferRow = (row) => ([a]) => {
   return out;
 };
 
+// ROUTE-1: asked to save with no Quadron or project cue, the save goes to the session's capture tool
+// (pickCaptureTool on this turn's init) exactly once, accepted, and nowhere else. A call to a built-in
+// file tool fails the row whether or not it was denied, and so does any file in the new working
+// directory afterwards (`filesWritten`, from live.mjs), and so does any change to auto memory or a
+// CLAUDE.md in the isolated config or home directory (`memoryChanges`, labelled paths from live.mjs, for
+// an `autoMemory` row). The notes always say which route the save took,
+// so a failure names the wrong one. Which project the capture names is recorded, not judged: the
+// prompt names none, and the skill says never to guess one.
+export const WRONG_ROUTE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+const SAVE_CLAIM_RE = /\b(saved|filed|stored|kept|noted|remembered)\b/i;
+const targetOf = (input) => {
+  const p = input?.file_path ?? input?.notebook_path ?? input?.path;
+  return typeof p === "string" && p ? p : "no path";
+};
+export function verdictRoute1([a], { filesWritten = [], memoryChanges = [] } = {}) {
+  const f = [];
+  const tool = pickCaptureTool(a.init?.tools);
+  const wrong = a.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
+  const routes = wrong.map((u) => `${u.name} ${targetOf(u.input)}${denied(a, u.id) ? " (denied)" : ""}`);
+  if (wrong.length) f.push(`wrong save route: ${routes.join("; ")}`);
+  if (filesWritten.length) f.push(`files written in the working directory: ${filesWritten.join(", ")}`);
+  if (memoryChanges.length) f.push(`auto memory or CLAUDE.md changed: ${memoryChanges.join(", ")}`);
+  const caps = a.tool_uses.filter((u) => CAPTURE_RE.test(u.name));
+  const other = caps.filter((u) => u.name !== tool);
+  if (other.length) f.push(`another capture tool was called: ${other.map((u) => u.name).join(", ")}`);
+  const mine = caps.filter((u) => u.name === tool);
+  const accepted = mine.filter((u) => writeAccepted(a, u.id));
+  if (!mine.length) f.push(`no ${tool} call`);
+  else if (mine.length !== 1 || accepted.length !== 1) f.push(`${tool} calls: ${mine.length}, accepted: ${accepted.length} (expected 1 and 1)`);
+  if (mine.some((u) => reportsFailedWrite(resultOf(a, u.id)))) f.push(`${tool} reply reports a failed write (ok:false, or "may or may not be in the record")`);
+  if (!a.result) f.push("no result");
+  else if (!success(a)) f.push(`result was ${a.result.subtype}`);
+  f.push(...contextFails([a]));
+  const via = [
+    ...accepted.map((u) => u.name),
+    ...mine.filter((u) => !accepted.includes(u)).map((u) => `${u.name} (not accepted)`),
+    ...other.map((u) => `${u.name} (other capture tool)`),
+    ...routes, ...filesWritten.map((p) => `file ${p}`), ...memoryChanges.map((p) => `memory ${p}`),
+  ];
+  const notes = [`capture tool: ${tool}`, `save route: ${via.length ? via.join("; ") : "none"}`];
+  if (accepted.length) notes.push(`quad_name: ${typeof accepted[0].input?.quad_name === "string" ? accepted[0].input.quad_name : "not sent"}`);
+  if (!accepted.length) notes.push(`answer claims a save: ${SAVE_CLAIM_RE.test(`${a.assistant_text}\n${answer(a)}`) ? "yes" : "no"} (a word match, read the evidence)`);
+  const out = fin(f);
+  out.notes.push(...notes);
+  return out;
+}
+
+// The overall verdict of ROUTE-1 and every other `autoMemory` routing row (the ON variants): turn 1's
+// routing verdict `v` (verdictRoute1, which reads turn 1 alone),
+// read with the memory-on probe of turn 2. code.claude.com/docs/en/memory#how-it-works, read 2026-11-06:
+// the first 200 lines or 25KB of MEMORY.md load at the start of every conversation, and the SDK's init
+// message has no memory field (agent-sdk/typescript#sdksystemmessage), so the seeded nonce echoed back is
+// the only measure that memory was on. `probe`: {state:"ran", text} | {state:"skipped"|"error", why} |
+// null (not reached). A FAIL stays FAIL. A PASS stands only with the nonce echoed; otherwise it is
+// INCONCLUSIVE, never a pass.
+export const INCONCLUSIVE = "INCONCLUSIVE";
+export const SEED_SALIENCE_NOTE = "the seed makes the memory route more salient (stricter test)";
+export const MEMORY_ON_EVIDENCE_NOTE = "turn 1 wrote to auto memory, which is itself evidence that auto memory was on";
+export function memoryProbeVerdict(v, probe, { code, memoryChanges = [] }) {
+  let memoryOn;
+  if (probe?.state === "ran") memoryOn = typeof probe.text === "string" && probe.text.includes(code) ? "measured (nonce echoed)" : "not shown";
+  else memoryOn = `inconclusive (${probe?.why ?? "the probe was not reached"})`;
+  const notes = [...(v.notes ?? []), `memory-on: ${memoryOn}`, SEED_SALIENCE_NOTE];
+  if (v.verdict === "FAIL") {
+    if (memoryChanges.some((p) => /(^|\/)memory(\/|$)/i.test(p))) notes.push(MEMORY_ON_EVIDENCE_NOTE);
+    return { ...v, notes };
+  }
+  if (v.verdict === "PASS" && memoryOn !== "measured (nonce echoed)") {
+    return { ...v, verdict: INCONCLUSIVE, notes: [...notes, "turn 1 routed to Quadron, but auto memory was not shown to be on: never a pass"] };
+  }
+  return { ...v, notes };
+}
+
+// A `memoryOff` routing row (rows.mjs): verdictRoute1 on its one turn, with a note that memory was off.
+// There is no probe, so memoryProbeVerdict never reads it (live.mjs seeds only an `autoMemory` row), and
+// a PASS is never made INCONCLUSIVE for the probe it cannot have. A FAIL stays FAIL.
+export const MEMORY_OFF_NOTE = "memory-off: auto memory disabled by the harness (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1); no memory-on probe";
+export function verdictRoute1MemoryOff(streams, ctx) {
+  const v = verdictRoute1(streams, ctx);
+  return { ...v, notes: [...(v.notes ?? []), MEMORY_OFF_NOTE] };
+}
+
 // Never a pass and never a product failure, whichever way the turn went.
 export const DIAGNOSTIC = "DIAGNOSTIC";
 export const verdictDiagnosticOffer = (row) => ([a]) => {
@@ -518,4 +600,7 @@ export const verdictDiagnosticOffer = (row) => ([a]) => {
 export const VERDICTS = {
   T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
   "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
+  // ROUTE-1 and every variant: verdictRoute1 on turn 1; a `memoryOff` row adds its note. An `autoMemory`
+  // row's verdict is then read with its probe in live.mjs (memoryProbeVerdict).
+  ...Object.fromEntries(ROUTE_ROW_NAMES.map((r) => [r, ROWS[r].memoryOff ? verdictRoute1MemoryOff : verdictRoute1])),
 };
