@@ -561,6 +561,8 @@ async function rowAttempt(ctx, def) {
   } else if (summary.verdict === null && !summary.partial) {
     const filesWritten = beforeCwd ? changedEntries(beforeCwd, afterTurn1.cwd) : [];
     const routed = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, memoryChanges });
+    // Only an `autoMemory` row has a seed, so every ON routing row is read with its probe and a
+    // `memoryOff` row (one turn, no probe) never is: its verdict is turn 1's alone.
     const v = seed ? memoryProbeVerdict(routed, probe, { code: seed.code, memoryChanges }) : routed;
     summary.verdict = v.verdict;
     summary.notes.push(...(v.notes ?? []));

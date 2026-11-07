@@ -2,7 +2,7 @@
 // (sdk.d.ts:6234), assistant tool_use blocks, user tool_result blocks with the optional structured
 // tool_use_result (:6587, unknown-typed), result (:5960-5981).
 
-import { CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool } from "./rows.mjs";
+import { CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool } from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
 
 const REVIEW_PENDING_RE = /Saved for your review/;
@@ -551,7 +551,8 @@ export function verdictRoute1([a], { filesWritten = [], memoryChanges = [] } = {
   return out;
 }
 
-// ROUTE-1's overall verdict: turn 1's routing verdict `v` (verdictRoute1, which reads turn 1 alone),
+// The overall verdict of ROUTE-1 and every other `autoMemory` routing row (the ON variants): turn 1's
+// routing verdict `v` (verdictRoute1, which reads turn 1 alone),
 // read with the memory-on probe of turn 2. code.claude.com/docs/en/memory#how-it-works, read 2026-11-06:
 // the first 200 lines or 25KB of MEMORY.md load at the start of every conversation, and the SDK's init
 // message has no memory field (agent-sdk/typescript#sdksystemmessage), so the seeded nonce echoed back is
@@ -576,6 +577,15 @@ export function memoryProbeVerdict(v, probe, { code, memoryChanges = [] }) {
   return { ...v, notes };
 }
 
+// A `memoryOff` routing row (rows.mjs): verdictRoute1 on its one turn, with a note that memory was off.
+// There is no probe, so memoryProbeVerdict never reads it (live.mjs seeds only an `autoMemory` row), and
+// a PASS is never made INCONCLUSIVE for the probe it cannot have. A FAIL stays FAIL.
+export const MEMORY_OFF_NOTE = "memory-off: auto memory disabled by the harness (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1); no memory-on probe";
+export function verdictRoute1MemoryOff(streams, ctx) {
+  const v = verdictRoute1(streams, ctx);
+  return { ...v, notes: [...(v.notes ?? []), MEMORY_OFF_NOTE] };
+}
+
 // Never a pass and never a product failure, whichever way the turn went.
 export const DIAGNOSTIC = "DIAGNOSTIC";
 export const verdictDiagnosticOffer = (row) => ([a]) => {
@@ -590,5 +600,7 @@ export const verdictDiagnosticOffer = (row) => ([a]) => {
 export const VERDICTS = {
   T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
   "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
-  "ROUTE-1": verdictRoute1,
+  // ROUTE-1 and every variant: verdictRoute1 on turn 1; a `memoryOff` row adds its note. An `autoMemory`
+  // row's verdict is then read with its probe in live.mjs (memoryProbeVerdict).
+  ...Object.fromEntries(ROUTE_ROW_NAMES.map((r) => [r, ROWS[r].memoryOff ? verdictRoute1MemoryOff : verdictRoute1])),
 };

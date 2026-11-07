@@ -1,18 +1,22 @@
 // ROUTE-1, the routing row: asked to save with no Quadron or project cue, the save goes to the capture
 // tool and not to a file. Synthetic streams on the verdict, then the whole row through the fake client.
+// Its variants (memory on and off, other save wordings) are at the end of the file.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as nodefs from "node:fs";
-import { main } from "../lib/main.mjs";
+import { main, USAGE } from "../lib/main.mjs";
 import path from "node:path";
-import { AUTO_MEMORY_ON, AUTO_MEMORY_VAR, PROJECT_DIR_VAR, DISALLOWED_TOOLS, OBSERVED_WRITE_TOOLS, assertAutoMemory, assertSessionOptions, buildChildEnv, checkSettingsDenyOnly, isMemoryPath, unexpectedInitTools } from "../lib/guards.mjs";
+import { AUTO_MEMORY_ON, AUTO_MEMORY_VAR, PROJECT_DIR_VAR, PROJECT_DIR_NAME_RE, DISALLOWED_TOOLS, OBSERVED_WRITE_TOOLS, assertAutoMemory, assertSessionOptions, buildChildEnv, checkSettingsDenyOnly, isMemoryPath, unexpectedInitTools } from "../lib/guards.mjs";
 import { buildOptions } from "../lib/options.mjs";
-import { ROWS, ROW_NAMES, CAPTURE_PLACEHOLDER, SEED_PREFIX, turnTools } from "../lib/rows.mjs";
+import { ROWS, ROW_NAMES, AUTO_MEMORY_ROW_NAMES, ROUTE_ROW_NAMES, SESSION_ROW_NAMES, ROUTE_DECISION, CAPTURE_PLACEHOLDER, SEED_PREFIX, turnTools } from "../lib/rows.mjs";
 import { changedEntries, memoryChangesBetween } from "../lib/live.mjs";
-import { INCONCLUSIVE, MEMORY_ON_EVIDENCE_NOTE, SEED_SALIENCE_NOTE, VERDICTS, collect, memoryProbeVerdict, verdictRoute1 } from "../lib/verdicts.mjs";
+import { INCONCLUSIVE, MEMORY_OFF_NOTE, MEMORY_ON_EVIDENCE_NOTE, SEED_SALIENCE_NOTE, VERDICTS, collect, memoryProbeVerdict, verdictRoute1, verdictRoute1MemoryOff } from "../lib/verdicts.mjs";
 import { box, fakeClient, liveEnv, init, result, toolUse, toolResult, assistantText, goodSettings, autoMemorySettings, SKILL, CAPTURE, T2_OK } from "./helpers.mjs";
 
 const ROW = "ROUTE-1";
+// The routing rows with auto memory on (ROUTE-1's shape) and off (one turn, no probe).
+const ON_ROWS = ["ROUTE-1", "ROUTE-1-SAVE-ON", "ROUTE-1-REMEMBER-ON", "ROUTE-1-RECORD", "ROUTE-1-QUADRON"];
+const OFF_ROWS = ["ROUTE-1-OFF", "ROUTE-1-SAVE-OFF", "ROUTE-1-REMEMBER-OFF"];
 const COMMIT = "mcp__quadron__quad_commit";
 const DECIDED = "We bill annually only; monthly plans are ruled out.";
 const MEMORY_FILE = "/work/cwd/MEMORY.md";
@@ -29,7 +33,7 @@ const lineOf = (out) => out.d.io.lines.find((l) => l.startsWith(`${ROW}: `));
 const routeArgv = (b, extra = []) => b.argv(ROW, {}, ["--auto-memory-settings", b.autoMemorySettings, ...extra]);
 const capturedRow = () => [init(), SKILL(), ...captured(), ok("Saved.")];
 // Turn 2, the memory-on probe. Its init lists only connector names: the turn asks for no built-in tool.
-const SEED_FILE = (args) => path.join(args.options.env.CLAUDE_CONFIG_DIR, "projects", "route1", "memory", "MEMORY.md");
+const SEED_FILE = (args) => path.join(args.options.env.CLAUDE_CONFIG_DIR, "projects", args.options.env[PROJECT_DIR_VAR], "memory", "MEMORY.md");
 const codeIn = (args) => /QX-[0-9a-f]{8}/.exec(nodefs.readFileSync(SEED_FILE(args), "utf8"))?.[0] ?? "none";
 const probeInit = () => init({ tools: ["mcp__quadron__quad_context", CAPTURE] });
 const echo = (args) => [probeInit(), result(0.12, { result: codeIn(args) })];
@@ -203,7 +207,8 @@ test("Write and Edit in init still stop every other session row", async () => {
   const out = await run(b, b.argv("T4O-N"), [[init({ tools: ["Skill", "Write"] }), ok("x")]]);
   assert.equal(out.r.exitCode, 3);
   assert.ok(out.r.summary.stoppedBecause.includes("Write"));
-  for (const row of Object.keys(ROWS).filter((r) => r !== ROW && !ROWS[r].noSession)) assert.ok(!ROWS[row].observeWrites, row);
+  for (const row of Object.keys(ROWS).filter((r) => !ROUTE_ROW_NAMES.includes(r) && !ROWS[r].noSession)) assert.ok(!ROWS[row].observeWrites, row);
+  for (const row of ROUTE_ROW_NAMES) assert.equal(ROWS[row].observeWrites, true, row);
 });
 
 const ROUTE_DRY_LINE = `would run ${ROW}: 2 turn(s), caps 6/1, one command and one session; Write and Edit shown and never allowed, so a save to a file is seen and denied; ` +
@@ -218,10 +223,11 @@ test("ROUTE-1 dry run: two turns, caps 6/1, the shown-not-allowed note, the proj
   assert.ok(d.io.lines.includes(ROUTE_DRY_LINE), d.io.lines.join("\n"));
 });
 
-// ---------------------------------------------------------------- auto memory: on for ROUTE-1 only
+// ---------------------------------------------------------------- auto memory: on for the ROUTE-1 ON rows only
 
-test("autoMemory: ROUTE-1 is the only row with it, and its prompt still names no Quadron, quad or project (save without naming Quadron)", () => {
-  assert.deepEqual(ROW_NAMES.filter((r) => ROWS[r].autoMemory), [ROW]);
+test("autoMemory: only the ROUTE-1 ON variants have it, and ROUTE-1's prompt still names no Quadron, quad or project (save without naming Quadron)", () => {
+  assert.deepEqual(ROW_NAMES.filter((r) => ROWS[r].autoMemory), ON_ROWS);
+  assert.deepEqual(AUTO_MEMORY_ROW_NAMES, ON_ROWS);
   for (const cue of [/quadron/i, /\bquad/i, /project/i]) assert.doesNotMatch(ROWS[ROW].turns[0].prompt, cue);
 });
 
@@ -342,7 +348,7 @@ test("other rows keep auto memory disabled: the env sets 1, --settings is loaded
     assert.equal(options.env[AUTO_MEMORY_VAR], "1", row);
     assert.equal(options.settings, b.settings, row);
   }
-  for (const r of ROW_NAMES.filter((n) => n !== ROW && !ROWS[n].noSession)) assert.ok(!ROWS[r].autoMemory, r);
+  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n) && !ROWS[n].noSession)) assert.ok(!ROWS[r].autoMemory, r);
   const named = box();
   const refused = await run(named, named.argv("T2", {}, ["--auto-memory-settings", named.autoMemorySettings]), [T2_OK()]);
   assert.equal(refused.r.exitCode, 2);
@@ -459,7 +465,7 @@ test("other rows: no project dir name in the env, no seed in the config dir, no 
     assert.deepEqual(nodefs.readdirSync(b.cfg), [], row);
     assert.equal(out.r.summary.memoryProbe, undefined, row);
   }
-  for (const r of ROW_NAMES.filter((n) => n !== ROW)) assert.ok(!ROWS[r].projectDirName && !(ROWS[r].turns ?? []).some((t) => t.probe), r);
+  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n))) assert.ok(!ROWS[r].projectDirName && !(ROWS[r].turns ?? []).some((t) => t.probe), r);
   const hooked = box();
   const out = await run(hooked, hooked.argv("T2"), [T2_OK()], { testOptionsHook: (o) => (o.env ? { ...o, env: { ...o.env, [PROJECT_DIR_VAR]: "route1" } } : o) });
   assert.equal(out.r.exitCode, 2);
@@ -483,4 +489,170 @@ test("INCONCLUSIVE counts as a ran attempt: two on Opus use both attempts, and a
   assert.equal(third.r.exitCode, 2);
   assert.equal(third.client.calls.length, 0);
   assert.match(third.d.io.errors.join(" "), /ROUTE-1 has used 2 of 2 attempt\(s\)/);
+});
+
+// ---------------------------------------------------------------- the variants: memory on and off, other wordings
+
+const ASKS = {
+  "ROUTE-1": "Please save that so it's remembered.", "ROUTE-1-OFF": "Please save that so it's remembered.",
+  "ROUTE-1-SAVE-ON": "Save that.", "ROUTE-1-SAVE-OFF": "Save that.",
+  "ROUTE-1-REMEMBER-ON": "Remember that.", "ROUTE-1-REMEMBER-OFF": "Remember that.",
+  "ROUTE-1-RECORD": "Save that to my record.", "ROUTE-1-QUADRON": "Save that to Quadron.",
+};
+const variantLine = (out, row) => out.d.io.lines.find((l) => l.startsWith(`${row}: `));
+
+test("variants: the routing rows are exactly ROUTE-1 and its seven variants, each the decision sentence then its ask", () => {
+  assert.deepEqual(ROUTE_ROW_NAMES, [...ON_ROWS.slice(0, 1), ...OFF_ROWS.slice(0, 1), "ROUTE-1-SAVE-ON", "ROUTE-1-SAVE-OFF", "ROUTE-1-REMEMBER-ON", "ROUTE-1-REMEMBER-OFF", "ROUTE-1-RECORD", "ROUTE-1-QUADRON"]);
+  assert.deepEqual([...ROUTE_ROW_NAMES].sort(), [...ON_ROWS, ...OFF_ROWS].sort());
+  assert.equal(ROUTE_DECISION, "Decision: we bill annually only; monthly plans are ruled out.");
+  for (const r of ROUTE_ROW_NAMES) assert.equal(ROWS[r].turns[0].prompt, `${ROUTE_DECISION} ${ASKS[r]}`, r);
+  assert.equal(ROWS[ROW].turns[0].prompt, "Decision: we bill annually only; monthly plans are ruled out. Please save that so it's remembered.");
+});
+
+test("variants: no prompt names Quadron, quad or project except the ROUTE-1-QUADRON control, and only ROUTE-1-RECORD says record", () => {
+  for (const r of ROUTE_ROW_NAMES) {
+    const p = ROWS[r].turns[0].prompt;
+    if (r === "ROUTE-1-QUADRON") assert.match(p, /\bQuadron\b/, r);
+    else for (const cue of [/quadron/i, /\bquad/i]) assert.doesNotMatch(p, cue, r);
+    assert.doesNotMatch(p, /project/i, r);
+    if (r === "ROUTE-1-RECORD") assert.match(p, /\brecord\b/, r);
+    else assert.doesNotMatch(p, /\brecord\b/i, r);
+  }
+});
+
+test("ON variants: ROUTE-1's shape, auto memory on, the probe as turn 2, a distinct valid project dir name each, verdictRoute1", () => {
+  const names = ON_ROWS.map((r) => ROWS[r].projectDirName);
+  assert.equal(new Set(names).size, ON_ROWS.length, names.join(", "));
+  for (const r of ON_ROWS) {
+    const def = ROWS[r];
+    assert.deepEqual([def.connector, def.cwd, def.observeWrites, def.autoMemory, def.memoryOff], [true, "empty", true, true, undefined], r);
+    assert.match(def.projectDirName, PROJECT_DIR_NAME_RE, r);
+    assert.equal(def.turns.length, 2, r);
+    assert.deepEqual(def.turns[1], ROWS[ROW].turns[1], r);
+    assert.deepEqual(def.turns[0].tools, ROWS[ROW].turns[0].tools, r);
+    assert.equal(def.turns[0].maxTurns, ROWS[ROW].turns[0].maxTurns, r);
+    assert.deepEqual(turnTools(def, def.turns[0]), ["Skill", "ToolSearch", ...OBSERVED_WRITE_TOOLS], r);
+    assert.equal(VERDICTS[r], verdictRoute1, r);
+  }
+});
+
+test("OFF variants: one turn, no auto memory, no project dir name, no probe, Write and Edit observed, the memory-off verdict", () => {
+  for (const r of OFF_ROWS) {
+    const def = ROWS[r];
+    assert.deepEqual([def.connector, def.cwd, def.observeWrites, def.memoryOff], [true, "empty", true, true], r);
+    assert.ok(!def.autoMemory && def.projectDirName === undefined, r);
+    assert.equal(def.turns.length, 1, r);
+    assert.ok(!def.turns[0].probe, r);
+    assert.deepEqual(def.turns[0].tools, ROWS[ROW].turns[0].tools, r);
+    assert.equal(VERDICTS[r], verdictRoute1MemoryOff, r);
+  }
+  for (const r of ROW_NAMES.filter((n) => !OFF_ROWS.includes(n))) assert.ok(!ROWS[r].memoryOff, r);
+});
+
+test("memory-off verdict: one accepted capture passes with the note; a Write to a memory file fails, with the note; never INCONCLUSIVE", () => {
+  const pass = verdictRoute1MemoryOff([rec(init(), SKILL(), ...captured(), ok("Saved."))], { filesWritten: [], memoryChanges: [] });
+  assert.equal(pass.verdict, "PASS", pass.notes.join("; "));
+  assert.ok(pass.notes.includes(MEMORY_OFF_NOTE));
+  assert.ok(pass.notes.includes(`save route: ${CAPTURE}`));
+  assert.equal(MEMORY_OFF_NOTE, "memory-off: auto memory disabled by the harness (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1); no memory-on probe");
+  const wrote = verdictRoute1MemoryOff([rec(init(), toolUse("w1", "Write", { file_path: MEMORY_FILE, content: DECIDED }), toolResult("w1", "denied", true), ok("I'll remember that."))]);
+  assert.equal(wrote.verdict, "FAIL");
+  assert.ok(wrote.notes.includes(`wrong save route: Write ${MEMORY_FILE} (denied)`), wrote.notes.join("; "));
+  assert.ok(wrote.notes.includes(MEMORY_OFF_NOTE));
+  const none = verdictRoute1MemoryOff([rec(init(), ok("Noted."))]);
+  assert.equal(none.verdict, "FAIL");
+  for (const v of [pass, wrote, none]) assert.ok(!v.notes.some((n) => n.startsWith("memory-on:")), v.notes.join("; "));
+});
+
+test("OFF variants through the row: one call, auto memory 1, --settings loaded, no seed and no memoryProbe; a capture passes with exit 0", async () => {
+  for (const r of OFF_ROWS) {
+    const b = box();
+    const out = await run(b, b.argv(r), [capturedRow()]);
+    assert.equal(out.r.exitCode, 0, `${r}: ${out.d.io.lines.join("\n")} ${out.d.io.errors.join(" ")}`);
+    assert.equal(out.r.summary.verdict, "PASS", r);
+    assert.equal(out.client.calls.length, 1, r);
+    const [{ options }] = out.client.calls;
+    assert.equal(options.env[AUTO_MEMORY_VAR], "1", r);
+    assert.ok(!(PROJECT_DIR_VAR in options.env), r);
+    assert.equal(options.settings, b.settings, r);
+    assert.deepEqual(options.tools, ["Skill", "ToolSearch", "Write", "Edit"], r);
+    assert.equal(out.client.prompts[0].text, `${ROUTE_DECISION} ${ASKS[r]}`, r);
+    assert.deepEqual(nodefs.readdirSync(b.cfg), [], r);
+    assert.equal(out.r.summary.memoryProbe, undefined, r);
+    assert.ok(out.r.summary.notes.includes(MEMORY_OFF_NOTE), r);
+    assert.ok(!out.r.summary.notes.some((n) => n.startsWith("memory-on:")), r);
+    assert.equal(variantLine(out, r), `${r}: PASS; call spend 0.1000 USD`);
+  }
+});
+
+test("OFF variants through the row: a Write is denied and the row FAILs naming it, exit 1, with the memory-off note", async () => {
+  const b = box();
+  const out = await run(b, b.argv("ROUTE-1-SAVE-OFF"), [[init(), toolUse("w1", "Write", { file_path: MEMORY_FILE, content: DECIDED }), ok("Filed.")]]);
+  assert.equal(out.r.exitCode, 1);
+  assert.equal(out.r.summary.verdict, "FAIL");
+  assert.deepEqual(out.client.denials.map((d) => d.tool_name), ["Write"]);
+  assert.ok(out.r.summary.notes.some((n) => n.startsWith("wrong save route: Write ") && n.endsWith("(denied)")), out.r.summary.notes.join("; "));
+  assert.ok(out.r.summary.notes.includes(MEMORY_OFF_NOTE));
+});
+
+test("OFF variants refuse --auto-memory-settings with no call, naming the auto-memory rows", async () => {
+  for (const r of OFF_ROWS) {
+    const b = box();
+    const out = await run(b, b.argv(r, {}, ["--auto-memory-settings", b.autoMemorySettings]), [capturedRow()]);
+    assert.equal(out.r.exitCode, 2, r);
+    assert.equal(out.client.calls.length, 0, r);
+    assert.match(out.d.io.errors.join(" "), new RegExp(`applies to an auto-memory row only \\(${ON_ROWS.join(", ")}\\)`), r);
+  }
+});
+
+test("ON variants through the row: each needs --auto-memory-settings, runs on it with its own project dir name, and reads the probe", async () => {
+  for (const r of ON_ROWS.filter((n) => n !== ROW)) {
+    const absent = box();
+    const refused = await run(absent, absent.argv(r), [capturedRow()]);
+    assert.equal(refused.r.exitCode, 2, r);
+    assert.equal(refused.client.calls.length, 0, r);
+    assert.match(refused.d.io.errors.join(" "), new RegExp(`--auto-memory-settings is required for ${r}`), r);
+    const b = box();
+    const out = await run(b, b.argv(r, {}, ["--auto-memory-settings", b.autoMemorySettings]), [capturedRow(), echo]);
+    assert.equal(out.r.exitCode, 0, `${r}: ${out.r.summary.notes.join("; ")}`);
+    assert.equal(out.r.summary.verdict, "PASS", r);
+    const [{ options }, { options: probeOptions }] = out.client.calls;
+    assert.equal(options.env[AUTO_MEMORY_VAR], AUTO_MEMORY_ON, r);
+    assert.equal(options.env[PROJECT_DIR_VAR], ROWS[r].projectDirName, r);
+    assert.equal(options.settings, b.autoMemorySettings, r);
+    assert.deepEqual([probeOptions.tools, probeOptions.allowedTools, probeOptions.maxTurns], [[], [], 1], r);
+    assert.equal(out.client.prompts[0].text, `${ROUTE_DECISION} ${ASKS[r]}`, r);
+    assert.deepEqual([out.r.summary.memoryProbe.projectDirName, out.r.summary.memoryProbe.echoed], [ROWS[r].projectDirName, true], r);
+    assert.ok(out.r.summary.notes.includes("memory-on: measured (nonce echoed)"), r);
+    assert.ok(!out.r.summary.notes.includes(MEMORY_OFF_NOTE), r);
+  }
+  const q = box();
+  const quiet = await run(q, q.argv("ROUTE-1-SAVE-ON", {}, ["--auto-memory-settings", q.autoMemorySettings]), [capturedRow(), silent]);
+  assert.equal(quiet.r.summary.verdict, INCONCLUSIVE);
+  assert.equal(quiet.r.exitCode, 1);
+});
+
+test("variants dry run: an ON variant shows two turns and the probe, an OFF variant one turn and memory off; no calls", async () => {
+  const lines = {
+    "ROUTE-1-SAVE-ON": "would run ROUTE-1-SAVE-ON: 2 turn(s), caps 6/1, one command and one session; Write and Edit shown and never allowed, so a save to a file is seen and denied; " +
+      "auto memory on, from --auto-memory-settings, project dir name route1-save, with the memory directory and CLAUDE.md watched; " +
+      "turn 2 is a memory-on probe with no tools (cap 1), asking for the reference code seeded in MEMORY.md",
+    "ROUTE-1-SAVE-OFF": "would run ROUTE-1-SAVE-OFF: 1 turn(s), caps 6, one command and one session; Write and Edit shown and never allowed, so a save to a file is seen and denied; " +
+      "auto memory off (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1), so no memory-on probe; the verdict reads turn 1 alone",
+  };
+  for (const [r, line] of Object.entries(lines)) {
+    const b = box();
+    const d = b.deps();
+    const res = await main({ argv: ["--dry-run", "--row", r], env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:9" }, ...d });
+    assert.equal(res.exitCode, 0, r);
+    assert.ok(d.io.lines.includes(line), d.io.lines.join("\n"));
+  }
+});
+
+test("usage: the --row list names every session row, and --auto-memory-settings names the auto-memory rows", () => {
+  assert.ok(USAGE.includes(`--row <${SESSION_ROW_NAMES.join("|")}>`), USAGE);
+  for (const r of ROUTE_ROW_NAMES) assert.ok(SESSION_ROW_NAMES.includes(r), r);
+  assert.ok(!SESSION_ROW_NAMES.includes("T3"));
+  assert.ok(USAGE.includes(`auto-memory rows only: ${ON_ROWS.join(", ")}`), USAGE);
+  assert.doesNotMatch(USAGE, /ROUTE-1 only/);
 });
