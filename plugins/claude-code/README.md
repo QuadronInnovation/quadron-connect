@@ -56,7 +56,9 @@ present.
 
 The plugin ships three hooks, declared in `hooks/hooks.json`. They load only where the plugin is enabled, inject context only, never call Quadron themselves, and keep the skill's offer-and-yes rule: anything to keep is offered in one line and saved only after the person says yes.
 
-- **SessionStart** (`startup`, `resume`, `clear`, `compact`): prints one static reminder line from `scripts/session-banner.mjs`. No network, no credentials. It does not claim a connection: the "Quadron is connected …" line comes only from the CLI-installed hook, which lists the person's projects. The reminder is:
+These hooks supplement the MCP server and the quadron skill; SKILL.md and the server contract are unchanged. The hooks only improve when Claude Code thinks about Quadron, for more consistent and reliable use.
+
+- **SessionStart** (`startup`, `resume`, `clear`, `compact`): prints one static reminder line from `scripts/session-banner.mjs`. No network, no credentials. It does not claim a connection. The two lines coexist: the "Quadron is connected …" line comes from the CLI-installed hook, which lists the person's projects, and this reminder comes from the plugin. The reminder is:
   > Quadron hooks are active. When the person reaches back to their prior work, call quad_context (or quad_recall inside a project) before answering; when they state a decision, standard or preference, offer once in one line to keep it in Quadron and call the capture tool only on their yes.
 - **UserPromptSubmit**: matches recall and capture phrases in `scripts/prompt-trigger.mjs`. Text inside `pasted_content` tags is ignored. A recall phrase injects:
   > Quadron: the person is reaching back to their prior work. Call quad_context with the topic (or quad_recall within a named project) before answering.
