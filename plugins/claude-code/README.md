@@ -11,6 +11,10 @@ when to read the person's Quadron record and what it may write to it. The transp
 plugins/claude-code/
 ├── .claude-plugin/plugin.json   # name, version, description
 ├── skills/quadron/SKILL.md      # when to recall, what may be captured
+├── hooks/
+│   ├── hooks.json
+│   ├── scripts/
+│   └── test/
 └── README.md                    # this file
 ```
 
@@ -36,7 +40,7 @@ present.
 
 ## What is deliberately not here
 
-- No capture hook. A terminal turn contains the assistant's words; writing those into the
+- No hook that captures or calls Quadron; the hooks in `hooks/` only add reminders. A terminal turn contains the assistant's words; writing those into the
   person's record as their own judgment is the wrong attribution (see `cli/README.md`,
   "Capture — removed before merge"). Capture goes through the skill: a judgment the person
   states goes to `future_you_capture` where the server lists it, other material to
@@ -47,6 +51,40 @@ present.
 - No `remember`/`forget`-style tool names. The Quadron server exposes `quad_commit`,
   `quad_create`, `quad_context`, `quad_recall`, `quad_search` and `quad_read` to every client;
   the rest appear where the server turns them on.
+
+## Hooks
+
+The plugin ships three hooks, declared in `hooks/hooks.json`. They load only where the plugin is enabled, inject context only, never call Quadron themselves, and keep the skill's offer-and-yes rule: anything to keep is offered in one line and saved only after the person says yes.
+
+- **SessionStart** (`startup`, `resume`, `clear`, `compact`): prints one static reminder line from `scripts/session-banner.mjs`. No network, no credentials. It does not claim a connection: the "Quadron is connected …" line comes only from the CLI-installed hook, which lists the person's projects. The reminder is:
+  > Quadron hooks are active. When the person reaches back to their prior work, call quad_context (or quad_recall inside a project) before answering; when they state a decision, standard or preference, offer once in one line to keep it in Quadron and call the capture tool only on their yes.
+- **UserPromptSubmit**: matches recall and capture phrases in `scripts/prompt-trigger.mjs`. Text inside `pasted_content` tags is ignored. A recall phrase injects:
+  > Quadron: the person is reaching back to their prior work. Call quad_context with the topic (or quad_recall within a named project) before answering.
+
+  A capture phrase injects:
+  > Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.
+- **PostToolUse** on `Write|Edit`: runs `scripts/memory-trigger.mjs` for auto-memory files under `~/.claude/projects/*/memory/`, `CLAUDE.md` and `CLAUDE.local.md`. `MEMORY.md`, subagent memory and frontmatter-only edits are skipped. It injects:
+  > Quadron: you just saved a memory: "<excerpt>". If it records the person's own decision, standard or preference, offer once in one line to keep it in their Quadron record, quoting their words; call future_you_capture (or quad_commit if that is not listed) only on a yes. If it is your own note, do nothing.
+
+  For `CLAUDE.md` and `CLAUDE.local.md` the wording is "you just updated their instructions file" in place of "you just saved a memory". `<excerpt>` stands for the edited text.
+
+Malformed or empty stdin, or an unexpected event, gives exit 0, no output and one line on stderr. A non-match is silent.
+
+**Docs:**
+
+- [Hooks reference](https://code.claude.com/docs/en/hooks): "Decision control", "Match MCP tools"
+- [Hooks guide](https://code.claude.com/docs/en/hooks-guide): "Filter by tool name and arguments with the `if` field"
+- [Plugin components](https://code.claude.com/docs/en/plugins/components): "Hooks"
+- [Memory](https://code.claude.com/docs/en/memory): "Storage location"
+
+**Untested until a live run:**
+
+1. Whether the `if` path filters match real memory paths on Windows and with `~`.
+2. Whether `--plugin-dir` loads plugin hooks.
+3. Whether the model acts on the injected text (offers, then calls only on a yes).
+4. Memory written to a custom `autoMemoryDirectory` is not covered.
+
+claude.ai runs no hooks; there the server-side tool descriptions govern.
 
 ## Verification
 
