@@ -14,7 +14,7 @@ import {
 import { appendLimit, appendReservation, appendSettlement, readRecord, recordModelTotal, recordTotal } from "./campaign.mjs";
 import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./connector.mjs";
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
-import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, hookWriteRule, nonceCode, pickCaptureTool, seedLine, showsWrites, turnTools } from "./rows.mjs";
+import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, hookWriteDir, hookWriteRule, nonceCode, pickCaptureTool, seedLine, showsWrites, turnPrompt, turnTools, writesMemory } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
 import { INCONCLUSIVE, VERDICTS, collect, hookSummary, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
@@ -341,8 +341,11 @@ async function rowAttempt(ctx, def) {
     return { exitCode: EXIT.STOPPED, evidenceFailed: true };
   }
   const autoMemory = def.autoMemory === true;
-  const projectDirName = autoMemory ? def.projectDirName : undefined;
-  const childEnv = buildChildEnv(env, { configDir: f["config-dir"], homeDir, maxOutputTokens: budget.maxOutputTokens, autoMemory, projectDirName });
+  // A `hookWriteDir: "memory"` row names its project directory too, with auto memory off: its one Write goes
+  // to that session's memory directory.
+  const memoryDir = writesMemory(def);
+  const projectDirName = autoMemory || memoryDir ? def.projectDirName : undefined;
+  const childEnv = buildChildEnv(env, { configDir: f["config-dir"], homeDir, maxOutputTokens: budget.maxOutputTokens, autoMemory, memoryDir, projectDirName });
   // An `autoMemory` row loads its own settings file, checked in main.mjs; every other row loads --settings.
   const settingsPath = autoMemory ? f["auto-memory-settings"] : f.settings;
   if (!settingsPath) throw new Refusal("no settings file for this row");
@@ -360,6 +363,19 @@ async function rowAttempt(ctx, def) {
       return { exitCode: EXIT.STOPPED };
     }
   }
+  // A memory-directory row: the directory its one file goes to is made here, empty, so its real path can be
+  // read for the write rule and anything in it afterwards was written there.
+  let hookDir = null;
+  if (memoryDir) {
+    hookDir = hookWriteDir(def, cwd, f["config-dir"]);
+    try {
+      fs.mkdirSync(hookDir, { recursive: true });
+    } catch {
+      io.err("could not create the memory directory: no call made");
+      return { exitCode: EXIT.STOPPED };
+    }
+  }
+  const beforeHookDir = hookDir ? snapshotTree(hookDir, fs) : null;
   // Auto memory and CLAUDE.md in the isolated config and home directories, before the row.
   const beforeMemory = autoMemory ? snapshotMemoryRoots(memoryRoots(f, homeDir), fs) : null;
   // The clone must stay clean. This shows whether a child touched it; it cannot prevent that. T5's
@@ -424,7 +440,7 @@ async function rowAttempt(ctx, def) {
       // A `hookWriteTarget` row's writing turn alone approves its one file; every other turn approves no
       // write. A path the rule cannot name exactly refuses here, as the options guard does, before any reservation:
       // a pattern character, or a working directory whose real path is another (the rule is composed from the real path).
-      const writeRule = hookWriteRule(def, turn, cwd, fs);
+      const writeRule = hookWriteRule(def, turn, cwd, fs, f["config-dir"]);
       if (writeRule) allowedTools.push(writeRule);
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
@@ -451,7 +467,7 @@ async function rowAttempt(ctx, def) {
       // pump passes over and keeps out of `call.messages`, reach its verdict as well as the evidence.
       const seenMessages = [];
       const call = await runGatedCall({
-        client, options, prompt: turn.prompt, def: { ...def, model: f.model, firstTurn: i === 0 }, lifts, timeoutMs: timeoutMs ?? DEFAULT_INIT_TIMEOUT_MS, deadline,
+        client, options, prompt: turnPrompt(def, turn, cwd, f["config-dir"]), def: { ...def, model: f.model, firstTurn: i === 0 }, lifts, timeoutMs: timeoutMs ?? DEFAULT_INIT_TIMEOUT_MS, deadline,
         abortController: new AbortController(), onMessage: (m) => { evidence.message(m); if (def.hookEvents) seenMessages.push(m); },
       });
       const s = def.hookEvents ? collect(call.messages, seenMessages) : collect(call.messages);
@@ -469,7 +485,7 @@ async function rowAttempt(ctx, def) {
       // wait on an early init, or the check before the first prompt.
       const polledConnected = call.initRecord?.servers?.find((m) => m.name === SERVER_NAME)?.status === "connected" || call.initRecord?.connectorStatus?.final === "connected";
       if (initStatuses(call.messages).some((status, n) => status === "pending" && !(n === 0 && polledConnected))) serverPending = true;
-      const rowEnds = i + 1 === def.turns.length || call.timedOut || call.error || s.cut_off || turnGate(row, s, { cwd }) !== null;
+      const rowEnds = i + 1 === def.turns.length || call.timedOut || call.error || s.cut_off || turnGate(row, s, { cwd, configDir: f["config-dir"] }) !== null;
       const neverLoaded = def.connector && serverPending && rowEnds && call.promptYielded && !call.gate &&
         !streams.some(connectorCalled) && !scanToolUses(s.tool_uses, lifts).length;
 
@@ -510,6 +526,11 @@ async function rowAttempt(ctx, def) {
       if (seed && i === 0 && s.init?.claude_code_version && !versionAtLeast(s.init.claude_code_version, PROJECT_DIR_MIN_VERSION)) {
         summary.notes.push(`CLAUDE_CODE_PROJECT_DIR_NAME needs Claude Code v${PROJECT_DIR_MIN_VERSION} or later; init shows ${s.init.claude_code_version}, so the seed may not be the memory loaded`);
       }
+      // A memory-directory row: an older version ignores the name, so the file is then under the config
+      // directory's projects/, but not in the directory that version would use for auto memory. A note only.
+      if (memoryDir && i === 0 && s.init?.claude_code_version && !versionAtLeast(s.init.claude_code_version, PROJECT_DIR_MIN_VERSION)) {
+        summary.notes.push(`CLAUDE_CODE_PROJECT_DIR_NAME needs Claude Code v${PROJECT_DIR_MIN_VERSION} or later; init shows ${s.init.claude_code_version}, so the file was not written to this session's own memory directory`);
+      }
       // On the probe, what would stop a routing turn is a probe error: the row is INCONCLUSIVE, after its spend is settled above.
       if (turn.probe) {
         const why = call.timedOut ? `the probe timed out after the row's ${rowSeconds} seconds`
@@ -546,7 +567,7 @@ async function rowAttempt(ctx, def) {
       }
       if (s.result?.subtype === "error_max_budget_usd") { stop("the per-call ceiling was reached", EXIT.STOPPED); break; }
       if (i + 1 < def.turns.length) {
-        const why = turnGate(row, s, { cwd });
+        const why = turnGate(row, s, { cwd, configDir: f["config-dir"] });
         if (why) { failRow(why); break; }
         // A record only: the next turn needs a capture tool and turn 1's init lists neither, so it goes on with the fallback.
         const listed = streams[0].init?.tools;
@@ -574,7 +595,9 @@ async function rowAttempt(ctx, def) {
     const filesWritten = beforeCwd ? changedEntries(beforeCwd, afterTurn1.cwd) : [];
     // Every turn's writes, for a `hookWriteTarget` row, whose one allowed file is written on turn 1.
     const filesWrittenAll = beforeCwd ? changedEntries(beforeCwd, snapshotTree(cwd, fs)) : [];
-    const routed = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, filesWrittenAll, memoryChanges, cwd });
+    // A memory-directory row: every file in that directory afterwards.
+    const hookDirFiles = beforeHookDir ? changedEntries(beforeHookDir, snapshotTree(hookDir, fs)) : [];
+    const routed = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, filesWrittenAll, memoryChanges, cwd, configDir: f["config-dir"], hookDirFiles });
     // Only an `autoMemory` row has a seed, so every ON routing row is read with its probe and a
     // `memoryOff` row (one turn, no probe) never is: its verdict is turn 1's alone.
     const v = seed ? memoryProbeVerdict(routed, probe, { code: seed.code, memoryChanges }) : routed;

@@ -122,8 +122,9 @@ function dryReport(f, io, explicit, red) {
     const surface = d.noPlugin ? "; connector only, no plugin or skill" : "";
     const reading = d.diagnostic ? "; diagnostic: never a pass, exit 0 whichever way the turn goes" : "";
     const shown = d.observeWrites ? "; Write and Edit shown and never allowed, so a save to a file is seen and denied"
-      : d.hookWriteTarget ? `; Write and Edit shown, and one rule allows a write to ${d.hookWriteTarget} in the row's working directory on turn ${d.turns.findIndex((t) => t.allowWrite) + 1} only; every other write is denied and fails the row` : "";
-    const hooks = d.hookEvents ? "; hook events recorded (includeHookEvents) and read by the verdict; a hook not observed is INCONCLUSIVE, never a pass" : "";
+      : d.hookWriteTarget ? `; Write and Edit shown, and one rule allows a write to ${d.hookWriteTarget} in ${d.hookWriteDir === "memory" ? `the memory directory (projects/${d.projectDirName}/memory under --config-dir, auto memory off)` : "the row's working directory"} on turn ${d.turns.findIndex((t) => t.allowWrite) + 1} only; every other write is denied and fails the row` : "";
+    const hooks = !d.hookEvents ? "" : d.hookWriteDir === "memory" ? "; hook events recorded (includeHookEvents) and read by the verdict; no PostToolUse event after the Write is FAIL, and one without the memory steer is INCONCLUSIVE"
+      : "; hook events recorded (includeHookEvents) and read by the verdict; a hook not observed is INCONCLUSIVE, never a pass";
     const probeTurn = d.turns.findIndex((t) => t.probe) + 1;
     const memory = d.autoMemory ? `; auto memory on, from --auto-memory-settings, project dir name ${d.projectDirName}, with the memory directory and CLAUDE.md watched` +
       (probeTurn ? `; turn ${probeTurn} is a memory-on probe with no tools (cap ${d.turns[probeTurn - 1].maxTurns}), asking for the reference code seeded in MEMORY.md` : "")

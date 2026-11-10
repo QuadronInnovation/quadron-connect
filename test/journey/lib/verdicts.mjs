@@ -5,7 +5,8 @@
 import path from "node:path";
 import {
   CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool,
-  CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_STEER, T1_HOOK_WORDS, T2_HOOK, T2_HOOK_STEER, T3B, hookWritePath,
+  CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_STEER, T1_HOOK_WORDS, T1_MEMORY_HOOK, T1_MEMORY_HOOK_STEER, T1_MEMORY_HOOK_WORDS,
+  T2_HOOK, T2_HOOK_STEER, T3B, hookWritePath, writesMemory,
 } from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
 
@@ -173,11 +174,12 @@ const t4Offer = (s) => readOffer(s.assistant_text, T4_OFFER_PHRASE, ROWS.T4.turn
 
 // May the next turn of a two-turn row start? Nothing further is spent unless this says so. T4's offer
 // names the project as the one-turn offer rows' must: in its sentence or the one before or after it.
-// T1-hook's turn 1 must have written its file and nothing else, and offered: see t1HookTurn1. `cwd` is
-// the row's working directory, which holds that file.
-export function turnGate(row, s, { cwd } = {}) {
+// T1-hook's and T1-memory-hook's turn 1 must have written its file and nothing else, and offered: see
+// hookWriteTurn1. `cwd` is the row's working directory and `configDir` the session's config directory;
+// the file is in one or the other.
+export function turnGate(row, s, { cwd, configDir } = {}) {
   if (!success(s)) return `turn 1 had no success result (${s?.result?.subtype ?? "none"})`;
-  if (row === T1_HOOK) return t1HookTurn1(s, cwd).fault;
+  if (row === T1_HOOK || row === T1_MEMORY_HOOK) return hookWriteTurn1(row, s, { cwd, configDir }).fault;
   if (row !== "T4") return null;
   if (captureAttempted(s)) return "captured before confirmation";
   const offer = t4Offer(s);
@@ -714,14 +716,25 @@ export function verdictT2Hook([a]) {
   return out;
 }
 
-// T1-hook's turn 1: the Write to the row's file ran, no write went anywhere else, no capture, and an
+// The two rows whose turn 1 writes one file. `steer`: the memory trigger's text for that file. `words`: what
+// turn 2's capture must hold. `strict` (T1-memory-hook): a pass needs a PostToolUse hook_started after the
+// Write and the steer in a PostToolUse hook_response, and no PostToolUse event at all after it is FAIL.
+const HOOK_WRITE_ROWS = {
+  [T1_HOOK]: { steer: T1_HOOK_STEER, words: T1_HOOK_WORDS, strict: false },
+  [T1_MEMORY_HOOK]: { steer: T1_MEMORY_HOOK_STEER, words: T1_MEMORY_HOOK_WORDS, strict: true },
+};
+export const NO_POST_TOOL_USE_NOTE = "no PostToolUse hook event came after the Write to the memory file";
+export const MEMORY_STEER_NOT_SEEN_NOTE = "a PostToolUse hook event came after the Write, but not a hook_started followed by the memory steer in a hook_response; a hand read of the evidence is needed";
+
+// Turn 1 of such a row: the Write to the row's file ran, no write went anywhere else, no capture, and an
 // offer at the stated phrase. `fault` is the first of these that fails, or null; `wrote` is the index in
-// tool_uses of the first Write that ran, or -1. Without `cwd` no write can be placed at the file, so
-// every write counts as one somewhere else.
-function t1HookTurn1(a, cwd) {
-  const def = ROWS[T1_HOOK];
+// tool_uses of the first Write that ran, or -1. Without the directory the file is in (`cwd`, or `configDir`
+// on a memory-directory row) no write can be placed at the file, so every write counts as one somewhere else.
+function hookWriteTurn1(row, a, { cwd, configDir } = {}) {
+  const def = ROWS[row];
   const name = def.hookWriteTarget;
-  const target = cwd ? normalPath(hookWritePath(def, cwd)) : null;
+  const known = Boolean(cwd) && (!writesMemory(def) || Boolean(configDir));
+  const target = known ? normalPath(hookWritePath(def, cwd, configDir)) : null;
   const atTarget = (u) => Boolean(target) && typeof u.input?.file_path === "string" && normalPath(path.resolve(cwd, u.input.file_path)) === target;
   const writes = a.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
   const elsewhere = writes.filter((u) => !atTarget(u));
@@ -739,19 +752,27 @@ function t1HookTurn1(a, cwd) {
 // or hook text holding the memory trigger's instructions-file steer, T1_HOOK_STEER); turn 2 makes exactly one
 // accepted capture holding the person's words, and writes nothing. `filesWrittenAll` is every file in the
 // working directory afterwards, from live.mjs: anything but the row's file fails it.
-export function verdictT1Hook([a, b], { cwd, filesWrittenAll = [] } = {}) {
+// T1-memory-hook: the same, with the file in the memory directory, so the working directory must stay empty
+// and `hookDirFiles` (every file in the memory directory afterwards) may hold the row's file only; and the
+// stricter hook reading of HOOK_WRITE_ROWS.
+const verdictHookWrite = (row) => ([a, b], { cwd, configDir, filesWrittenAll = [], hookDirFiles = [] } = {}) => {
   const f = [];
-  const name = ROWS[T1_HOOK].hookWriteTarget;
+  const def = ROWS[row];
+  const { steer, words, strict } = HOOK_WRITE_ROWS[row];
+  const name = def.hookWriteTarget;
+  const inMemory = writesMemory(def);
   if (captureAttempted(a)) f.push("captured before confirmation");
-  const gate = turnGate(T1_HOOK, a, { cwd });
+  const gate = turnGate(row, a, { cwd, configDir });
   if (gate && gate !== "captured before confirmation") f.push(gate);
-  const { wrote } = t1HookTurn1(a, cwd);
+  const { wrote } = hookWriteTurn1(row, a, { cwd, configDir });
   const two = b ?? { tool_uses: [], tool_results: [], denied_captures: [], denied_ids: new Set() };
   if (!b) f.push("turn 2 did not run");
   const later = two.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
   if (later.length) f.push(`turn 2 wrote: ${later.map((u) => `${u.name} ${targetOf(u.input)}${denied(two, u.id) ? " (denied)" : ""}`).join("; ")}`);
-  const others = filesWrittenAll.filter((p) => p !== name);
-  if (others.length) f.push(`files written in the working directory besides ${name}: ${others.join(", ")}`);
+  const others = inMemory ? filesWrittenAll : filesWrittenAll.filter((p) => p !== name);
+  if (others.length) f.push(inMemory ? `files written in the working directory: ${others.join(", ")}` : `files written in the working directory besides ${name}: ${others.join(", ")}`);
+  const strays = inMemory ? hookDirFiles.filter((p) => p !== name) : [];
+  if (strays.length) f.push(`files written in the memory directory besides ${name}: ${strays.join(", ")}`);
   const tool = pickCaptureTool(a.init?.tools);
   const caps = two.tool_uses.filter((u) => CAPTURE_RE.test(u.name));
   const other = caps.filter((u) => u.name !== tool);
@@ -759,12 +780,25 @@ export function verdictT1Hook([a, b], { cwd, filesWrittenAll = [] } = {}) {
   const mine = caps.filter((u) => u.name === tool);
   const accepted = mine.filter((u) => writeAccepted(two, u.id));
   if (b && (mine.length !== 1 || accepted.length !== 1)) f.push(`turn 2 ${tool} calls: ${mine.length}, accepted: ${accepted.length} (expected 1 and 1)`);
-  else if (b && !inputStrings(mine[0].input).some((t) => hasPhrase(t, T1_HOOK_WORDS))) f.push(`turn 2's capture input does not hold the person's words ("${T1_HOOK_WORDS}")`);
+  else if (b && !inputStrings(mine[0].input).some((t) => hasPhrase(t, words))) f.push(`turn 2's capture input does not hold the person's words ("${words}")`);
   if (b && !success(b)) f.push(`turn 2 result was ${b.result?.subtype ?? "none"}`);
   f.push(...contextFails(b ? [a, b] : [a]));
-  // hook_started or hook_progress alone shows the hook began, not that it answered: never a pass.
   const after = (a.hook_events ?? []).filter((e) => e.toolUsesBefore > wrote);
-  const seen = wrote >= 0 && (after.some((e) => e.hook_event === "PostToolUse" && e.subtype === "hook_response") || steerSeen(a, T1_HOOK_STEER, { after: wrote }));
+  if (strict) {
+    // The memory-file row: the hook must be seen to start after the Write and to answer with the memory steer.
+    const post = wrote >= 0 ? after.filter((e) => e.hook_event === "PostToolUse") : [];
+    const started = post.some((e) => e.subtype === "hook_started");
+    const steered = post.some((e) => e.subtype === "hook_response" && e.strings.some((t) => t.includes(steer)));
+    const seen = started && steered;
+    if (wrote >= 0 && !post.length) f.push(NO_POST_TOOL_USE_NOTE);
+    const notes = [`capture tool: ${tool}`, `PostToolUse after the Write: hook_started ${started ? "seen" : "not seen"}, memory steer in a hook_response ${steered ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
+    if (!f.length && !seen) return { verdict: INCONCLUSIVE, notes: [MEMORY_STEER_NOT_SEEN_NOTE, ...notes] };
+    const out = fin(f);
+    out.notes.push(...notes);
+    return out;
+  }
+  // hook_started or hook_progress alone shows the hook began, not that it answered: never a pass.
+  const seen = wrote >= 0 && (after.some((e) => e.hook_event === "PostToolUse" && e.subtype === "hook_response") || steerSeen(a, steer, { after: wrote }));
   const startedOnly = wrote >= 0 && !seen && hookSeen(a, "PostToolUse", wrote);
   const notes = [`capture tool: ${tool}`, `PostToolUse hook event after the Write: ${seen ? "seen" : startedOnly ? "started only" : "not seen"}`, OFFER_HEURISTIC_NOTE];
   if (!f.length && startedOnly) return { verdict: INCONCLUSIVE, notes: [HOOK_STARTED_ONLY_NOTE, ...notes] };
@@ -772,11 +806,13 @@ export function verdictT1Hook([a, b], { cwd, filesWrittenAll = [] } = {}) {
   const out = fin(f);
   out.notes.push(...notes);
   return out;
-}
+};
+export const verdictT1Hook = verdictHookWrite(T1_HOOK);
+export const verdictT1MemoryHook = verdictHookWrite(T1_MEMORY_HOOK);
 
 export const VERDICTS = {
   T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
-  [T3B]: verdictT3b, [T1_HOOK]: verdictT1Hook, [T2_HOOK]: verdictT2Hook,
+  [T3B]: verdictT3b, [T1_HOOK]: verdictT1Hook, [T2_HOOK]: verdictT2Hook, [T1_MEMORY_HOOK]: verdictT1MemoryHook,
   "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
   // ROUTE-1 and every variant: verdictRoute1 on turn 1; a `memoryOff` row adds its note. An `autoMemory`
   // row's verdict is then read with its probe in live.mjs (memoryProbeVerdict).

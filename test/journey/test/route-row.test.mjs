@@ -465,7 +465,9 @@ test("other rows: no project dir name in the env, no seed in the config dir, no 
     assert.deepEqual(nodefs.readdirSync(b.cfg), [], row);
     assert.equal(out.r.summary.memoryProbe, undefined, row);
   }
-  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n))) assert.ok(!ROWS[r].projectDirName && !(ROWS[r].turns ?? []).some((t) => t.probe), r);
+  // The one row that names a project directory with auto memory off writes to the memory directory itself.
+  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n))) assert.ok((!ROWS[r].projectDirName || ROWS[r].hookWriteDir === "memory") && !(ROWS[r].turns ?? []).some((t) => t.probe), r);
+  assert.deepEqual(ROW_NAMES.filter((n) => !ON_ROWS.includes(n) && ROWS[n].projectDirName), ["T1-memory-hook"]);
   const hooked = box();
   const out = await run(hooked, hooked.argv("T2"), [T2_OK()], { testOptionsHook: (o) => (o.env ? { ...o, env: { ...o.env, [PROJECT_DIR_VAR]: "route1" } } : o) });
   assert.equal(out.r.exitCode, 2);
