@@ -18,7 +18,7 @@ test('parses with exactly the three events', () => {
 });
 
 test('every command script exists under the plugin root', () => {
-  assert.ok(handlers.length >= 5);
+  assert.equal(handlers.length, 3);
   for (const h of handlers) {
     assert.equal(h.type, 'command');
     const m = /^node "\$\{CLAUDE_PLUGIN_ROOT\}([^"]+)"$/.exec(h.command);
@@ -28,28 +28,15 @@ test('every command script exists under the plugin root', () => {
   }
 });
 
-test('every if is an Edit(...) rule, and PostToolUse carries the three paths', () => {
-  for (const h of handlers) {
-    if ('if' in h) assert.match(h.if, /^Edit\(.+\)$/);
-  }
-  assert.deepEqual(config.hooks.PostToolUse[0].hooks.map((h) => h.if), [
-    'Edit(//**/projects/*/memory/**)',
-    'Edit(//**/CLAUDE.md)',
-    'Edit(//**/CLAUDE.local.md)',
+// In a live run on Windows the `if` path filters let no PostToolUse hook start for a Write of
+// CLAUDE.md, so the script alone narrows by path: it runs on every Write or Edit and is silent
+// on a non-match.
+test('PostToolUse has one handler, the memory trigger, and no handler carries an if', () => {
+  assert.equal(config.hooks.PostToolUse.length, 1);
+  assert.deepEqual(config.hooks.PostToolUse[0].hooks, [
+    { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/memory-trigger.mjs"' },
   ]);
-});
-
-// A relative pattern anchors at the session's cwd and `~/` at the home directory; both miss
-// files outside them (a relocated config directory, its CLAUDE.md). Only `//` reaches everywhere.
-test('every path in an if is anchored at the filesystem root, none relative or ~/', () => {
-  for (const h of handlers) {
-    if (!('if' in h)) continue;
-    const p = /^Edit\((.+)\)$/.exec(h.if)[1];
-    assert.ok(p.startsWith('//'), h.if);
-    assert.ok(!p.startsWith('~/') && !p.includes('~'), h.if);
-  }
-  const memory = handlers.filter((h) => typeof h.if === 'string' && h.if.includes('memory'));
-  assert.equal(memory.length, 1);
+  for (const h of handlers) assert.ok(!('if' in h), JSON.stringify(h));
 });
 
 test('no handler is mcp_tool, prompt or agent', () => {
