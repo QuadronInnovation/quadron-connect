@@ -33,10 +33,23 @@ test('every if is an Edit(...) rule, and PostToolUse carries the three paths', (
     if ('if' in h) assert.match(h.if, /^Edit\(.+\)$/);
   }
   assert.deepEqual(config.hooks.PostToolUse[0].hooks.map((h) => h.if), [
-    'Edit(~/.claude/projects/**/memory/**)',
-    'Edit(**/CLAUDE.md)',
-    'Edit(**/CLAUDE.local.md)',
+    'Edit(//**/projects/*/memory/**)',
+    'Edit(//**/CLAUDE.md)',
+    'Edit(//**/CLAUDE.local.md)',
   ]);
+});
+
+// A relative pattern anchors at the session's cwd and `~/` at the home directory; both miss
+// files outside them (a relocated config directory, its CLAUDE.md). Only `//` reaches everywhere.
+test('every path in an if is anchored at the filesystem root, none relative or ~/', () => {
+  for (const h of handlers) {
+    if (!('if' in h)) continue;
+    const p = /^Edit\((.+)\)$/.exec(h.if)[1];
+    assert.ok(p.startsWith('//'), h.if);
+    assert.ok(!p.startsWith('~/') && !p.includes('~'), h.if);
+  }
+  const memory = handlers.filter((h) => typeof h.if === 'string' && h.if.includes('memory'));
+  assert.equal(memory.length, 1);
 });
 
 test('no handler is mcp_tool, prompt or agent', () => {
