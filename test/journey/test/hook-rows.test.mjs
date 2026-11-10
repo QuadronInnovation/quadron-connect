@@ -105,10 +105,14 @@ test("T1-hook: neither prompt trips the prompt trigger's capture or recall, so t
   assert.ok(ROWS[T1H].turns[1].prompt.toLowerCase().includes(T1_HOOK_WORDS));
   const r = memoryDecide({ hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: TARGET, content: DECISION } });
   assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /you just updated their instructions file/);
-  // The plugin's PostToolUse filter for this file name, not the auto-memory path filter.
+});
+
+test("the plugin's PostToolUse hook runs the memory trigger on Write and Edit, and no handler carries an if", () => {
   const hooks = JSON.parse(nodefs.readFileSync(path.join(REPO, "plugins", "claude-code", "hooks", "hooks.json"), "utf8"));
-  const filters = hooks.hooks.PostToolUse.flatMap((m) => m.hooks.map((h) => h.if));
-  assert.ok(filters.includes(`Edit(**/${ROWS[T1H].hookWriteTarget})`), filters.join(", "));
+  const group = hooks.hooks.PostToolUse.find((m) => m.matcher === "Write|Edit");
+  assert.ok(group, JSON.stringify(hooks.hooks.PostToolUse));
+  assert.ok(group.hooks.some((h) => h.type === "command" && h.command.endsWith('/hooks/scripts/memory-trigger.mjs"')), JSON.stringify(group.hooks));
+  for (const h of Object.values(hooks.hooks).flatMap((groups) => groups.flatMap((m) => m.hooks))) assert.ok(!("if" in h), JSON.stringify(h));
 });
 
 test("the steer texts the verdicts look for are the plugin scripts' own output for each row", () => {
