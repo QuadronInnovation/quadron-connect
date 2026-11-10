@@ -5,7 +5,7 @@
 import path from "node:path";
 import {
   CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool,
-  CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_WORDS, T2_HOOK, T3B, hookWritePath,
+  CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_STEER, T1_HOOK_WORDS, T2_HOOK, T2_HOOK_STEER, T3B, hookWritePath,
 } from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
 
@@ -653,7 +653,12 @@ export const verdictDiagnosticOffer = (row) => ([a]) => {
 // right order, but nothing shows the hook was the cause.
 export const HOOK_NOT_OBSERVED_NOTE = "hook event not observed; tool-call order only";
 export const NO_HOOK_OUTPUT_NOTE = "the SDK surfaced no hook output: no hook_response text was observed, so the reminder could not be read";
+export const HOOK_STEER_NOT_SEEN_NOTE = "the UserPromptSubmit hook ran, but its steer text was not in the recorded output; a hand read of the evidence is needed";
+export const HOOK_STARTED_ONLY_NOTE = "only hook_started/hook_progress was seen for PostToolUse after the Write: no hook_response and no steer text; a hand read of the evidence is needed";
 const hookSeen = (s, event, after = -1) => (s?.hook_events ?? []).some((e) => e.hook_event === event && e.toolUsesBefore > after);
+// A hook event after `after` tool calls whose recorded text holds `steer`. With `event`, of that event only.
+const steerSeen = (s, steer, { event = null, after = -1 } = {}) => (s?.hook_events ?? [])
+  .some((e) => (!event || e.hook_event === event) && e.toolUsesBefore > after && e.strings.some((t) => t.includes(steer)));
 const occurrences = (text, part) => String(text).split(part).length - 1;
 // Every string in an input, at any depth.
 const inputStrings = (v) => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(inputStrings)
@@ -689,7 +694,9 @@ export function verdictT3b([a]) {
   return out;
 }
 
-// T2-hook: the UserPromptSubmit hook event, an offer at the stated phrase, and no capture of any kind.
+// T2-hook: a UserPromptSubmit hook event whose recorded text holds the prompt trigger's capture steer
+// (T2_HOOK_STEER), an offer at the stated phrase, and no capture of any kind. An event without the steer
+// text is INCONCLUSIVE, never a pass.
 export function verdictT2Hook([a]) {
   const f = [];
   const { offerPhrase, turns } = ROWS[T2_HOOK];
@@ -698,8 +705,10 @@ export function verdictT2Hook([a]) {
   if (!isOffer(a.assistant_text, offerPhrase, turns[0].prompt)) f.push(`no offer with the stated phrase ("${offerPhrase}")`);
   f.push(...contextFails([a]));
   const seen = hookSeen(a, "UserPromptSubmit");
-  const notes = [`UserPromptSubmit hook event: ${seen ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
+  const steered = steerSeen(a, T2_HOOK_STEER, { event: "UserPromptSubmit" });
+  const notes = [`UserPromptSubmit hook event: ${seen ? "seen" : "not seen"}`, `UserPromptSubmit steer text: ${steered ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
   if (!f.length && !seen) return { verdict: INCONCLUSIVE, notes: [HOOK_NOT_OBSERVED_NOTE, ...notes] };
+  if (!f.length && !steered) return { verdict: INCONCLUSIVE, notes: [HOOK_STEER_NOT_SEEN_NOTE, ...notes] };
   const out = fin(f);
   out.notes.push(...notes);
   return out;
@@ -726,7 +735,8 @@ function t1HookTurn1(a, cwd) {
   return { fault, wrote };
 }
 
-// T1-hook: turn 1 as above, with the PostToolUse hook event after its Write; turn 2 makes exactly one
+// T1-hook: turn 1 as above, with the PostToolUse hook observed after its Write (a PostToolUse hook_response,
+// or hook text holding the memory trigger's instructions-file steer, T1_HOOK_STEER); turn 2 makes exactly one
 // accepted capture holding the person's words, and writes nothing. `filesWrittenAll` is every file in the
 // working directory afterwards, from live.mjs: anything but the row's file fails it.
 export function verdictT1Hook([a, b], { cwd, filesWrittenAll = [] } = {}) {
@@ -752,8 +762,12 @@ export function verdictT1Hook([a, b], { cwd, filesWrittenAll = [] } = {}) {
   else if (b && !inputStrings(mine[0].input).some((t) => hasPhrase(t, T1_HOOK_WORDS))) f.push(`turn 2's capture input does not hold the person's words ("${T1_HOOK_WORDS}")`);
   if (b && !success(b)) f.push(`turn 2 result was ${b.result?.subtype ?? "none"}`);
   f.push(...contextFails(b ? [a, b] : [a]));
-  const seen = wrote >= 0 && hookSeen(a, "PostToolUse", wrote);
-  const notes = [`capture tool: ${tool}`, `PostToolUse hook event after the Write: ${seen ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
+  // hook_started or hook_progress alone shows the hook began, not that it answered: never a pass.
+  const after = (a.hook_events ?? []).filter((e) => e.toolUsesBefore > wrote);
+  const seen = wrote >= 0 && (after.some((e) => e.hook_event === "PostToolUse" && e.subtype === "hook_response") || steerSeen(a, T1_HOOK_STEER, { after: wrote }));
+  const startedOnly = wrote >= 0 && !seen && hookSeen(a, "PostToolUse", wrote);
+  const notes = [`capture tool: ${tool}`, `PostToolUse hook event after the Write: ${seen ? "seen" : startedOnly ? "started only" : "not seen"}`, OFFER_HEURISTIC_NOTE];
+  if (!f.length && startedOnly) return { verdict: INCONCLUSIVE, notes: [HOOK_STARTED_ONLY_NOTE, ...notes] };
   if (!f.length && !seen) return { verdict: INCONCLUSIVE, notes: [HOOK_NOT_OBSERVED_NOTE, ...notes] };
   const out = fin(f);
   out.notes.push(...notes);

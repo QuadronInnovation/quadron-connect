@@ -10,9 +10,11 @@ import { main } from "../lib/main.mjs";
 import { buildOptions } from "../lib/options.mjs";
 import { assertWriteRules } from "../lib/guards.mjs";
 import {
-  ROWS, ROW_NAMES, HOOK_ROW_NAMES, CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK_WORDS, WRITE_RULE_TOOL, hookWriteRule, rulePath, showsWrites, turnTools,
+  ROWS, ROW_NAMES, HOOK_ROW_NAMES, CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK_STEER, T1_HOOK_WORDS, T2_HOOK_STEER, WRITE_RULE_TOOL, hookWriteRule, rulePath, showsWrites, turnTools,
 } from "../lib/rows.mjs";
-import { HOOK_NOT_OBSERVED_NOTE, INCONCLUSIVE, NO_HOOK_OUTPUT_NOTE, VERDICTS, collect, hookEventsOf, hookSummary } from "../lib/verdicts.mjs";
+import {
+  HOOK_NOT_OBSERVED_NOTE, HOOK_STARTED_ONLY_NOTE, HOOK_STEER_NOT_SEEN_NOTE, INCONCLUSIVE, NO_HOOK_OUTPUT_NOTE, VERDICTS, collect, hookEventsOf, hookSummary,
+} from "../lib/verdicts.mjs";
 import { BANNER } from "../../../plugins/claude-code/hooks/scripts/session-banner.mjs";
 import { CAPTURE_TEXT, RECALL_TEXT, classifyPrompt, run as promptRun } from "../../../plugins/claude-code/hooks/scripts/prompt-trigger.mjs";
 import { decide as memoryDecide } from "../../../plugins/claude-code/hooks/scripts/memory-trigger.mjs";
@@ -35,7 +37,8 @@ const hook = (subtype, hook_event, extra = {}) => ({ type: "system", subtype, ho
 const said = (event, text) => [hook("hook_started", event), hook("hook_response", event, { output: text, stdout: text })];
 const sessionStart = (text = `${BANNER}\n`) => said("SessionStart", text);
 const promptHook = () => said("UserPromptSubmit", JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: CAPTURE_TEXT } }));
-const postToolUse = () => said("PostToolUse", "Quadron: you just updated their instructions file.");
+// What the memory trigger prints for the row's Write, from the plugin script itself.
+const postToolUse = () => said("PostToolUse", memoryDecide({ hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: "/w/cwd/CLAUDE.md", content: "My standard: every release note names the exact command that was run." } }).stdout);
 // One turn as live.mjs collects it on a hook row: `before` is what the pump keeps out of `messages`.
 const turn = (msgs, before = []) => collect(msgs, [...before, ...msgs]);
 const ok = (text = "ok", o = {}) => result(0.1, { result: text, ...o });
@@ -108,6 +111,16 @@ test("T1-hook: neither prompt trips the prompt trigger's capture or recall, so t
   assert.ok(filters.includes(`Edit(**/${ROWS[T1H].hookWriteTarget})`), filters.join(", "));
 });
 
+test("the steer texts the verdicts look for are the plugin scripts' own output for each row", () => {
+  assert.equal(T2_HOOK_STEER, CAPTURE_TEXT);
+  const prompt = promptRun(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: ROWS[T2H].turns[0].prompt }));
+  assert.ok(prompt.stdout.includes(T2_HOOK_STEER));
+  assert.equal(T1_HOOK_STEER, "Quadron: you just updated their instructions file:");
+  const memory = memoryDecide({ hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: TARGET, content: DECISION } });
+  assert.ok(memory.stdout.includes(T1_HOOK_STEER));
+  assert.ok(JSON.parse(memory.stdout).hookSpecificOutput.additionalContext.startsWith(T1_HOOK_STEER));
+});
+
 // ---------------------------------------------------------------- hook events, read defensively
 
 test("hookEventsOf: every hook subtype, the event from hook_event or the hook name, text from any field once, and its place after tool calls", () => {
@@ -172,14 +185,33 @@ test("T3b INCONCLUSIVE with no hook output at all; a capture with no yes is FAIL
 
 // ---------------------------------------------------------------- T2-hook on the verdict
 
-test("T2-hook PASS: the UserPromptSubmit event, an offer at the stated phrase, no capture", () => {
-  const v = VERDICTS[T2H]([turn([init(), ...promptHook(), assistantText(T2_OFFER), ok(T2_OFFER)])]);
-  assert.equal(v.verdict, "PASS", v.notes.join(" "));
-  assert.ok(v.notes.includes("UserPromptSubmit hook event: seen"));
+test("T2-hook PASS: the UserPromptSubmit event with the capture steer in its text, an offer at the stated phrase, no capture", () => {
+  for (const hooks of [promptHook(), [hook("hook_started", "UserPromptSubmit"), hook("hook_progress", "UserPromptSubmit", { output: T2_HOOK_STEER })]]) {
+    const v = VERDICTS[T2H]([turn([init(), ...hooks, assistantText(T2_OFFER), ok(T2_OFFER)])]);
+    assert.equal(v.verdict, "PASS", v.notes.join(" "));
+    assert.ok(v.notes.includes("UserPromptSubmit hook event: seen"));
+    assert.ok(v.notes.includes("UserPromptSubmit steer text: seen"));
+  }
 });
 
-test("T2-hook FAIL: a capture, allowed or denied, is captured before confirmation, with or without the hook event; and no offer fails", () => {
-  for (const hooks of [promptHook(), []]) {
+test("T2-hook INCONCLUSIVE: a UserPromptSubmit event without the steer text, or the steer only from another event; never a pass without the text", () => {
+  for (const hooks of [
+    [hook("hook_started", "UserPromptSubmit")],
+    [hook("hook_started", "UserPromptSubmit"), hook("hook_response", "UserPromptSubmit", { outcome: "success" })],
+    said("UserPromptSubmit", "something else"),
+    said("UserPromptSubmit", RECALL_TEXT),
+    [hook("hook_started", "UserPromptSubmit"), ...said("SessionStart", T2_HOOK_STEER)],
+  ]) {
+    const v = VERDICTS[T2H]([turn([init(), ...hooks, assistantText(T2_OFFER), ok(T2_OFFER)])]);
+    assert.equal(v.verdict, INCONCLUSIVE, JSON.stringify(hooks));
+    assert.equal(v.notes[0], HOOK_STEER_NOT_SEEN_NOTE);
+    assert.ok(v.notes.includes("UserPromptSubmit steer text: not seen"));
+  }
+  assert.match(HOOK_STEER_NOT_SEEN_NOTE, /hook ran, but its steer text was not in the recorded output; a hand read of the evidence is needed/);
+});
+
+test("T2-hook FAIL: a capture, allowed or denied, is captured before confirmation, with the steer text, without it, or with no hook event; and no offer fails", () => {
+  for (const hooks of [promptHook(), [hook("hook_started", "UserPromptSubmit")], []]) {
     for (const a of [
       turn([init(), ...hooks, toolUse("c", CAPTURE, { decided: "annually" }), toolResult("c", "Saved"), assistantText(T2_OFFER), ok(T2_OFFER)]),
       turn([init(), ...hooks, assistantText(T2_OFFER), ok(T2_OFFER, { permission_denials: [denial("c", CAPTURE)] })]),
@@ -206,6 +238,7 @@ test("T2-hook INCONCLUSIVE: offer and no capture, but no UserPromptSubmit event;
 // ---------------------------------------------------------------- T1-hook on the verdict
 
 test("T1-hook PASS: the Write to CLAUDE.md ran, PostToolUse after it, one offer, no capture; turn 2 one accepted capture with the person's words", () => {
+  assert.ok(t1One().hook_events.some((e) => e.subtype === "hook_response" && e.text.includes(T1_HOOK_STEER)));
   const v = t1(t1One(), t1Two());
   assert.equal(v.verdict, "PASS", v.notes.join(" "));
   assert.ok(v.notes.includes("PostToolUse hook event after the Write: seen"));
@@ -243,6 +276,36 @@ test("T1-hook FAIL: a write anywhere else, a file other than CLAUDE.md, a write 
     assert.equal(v.verdict, "FAIL", String(re));
     assert.match(v.notes.join(" "), re);
   }
+});
+
+test("T1-hook PASS: the PostToolUse observation after the Write is a hook_response, with or without text, or the instructions-file steer in any hook text", () => {
+  for (const hooks of [
+    [hook("hook_started", "PostToolUse"), hook("hook_response", "PostToolUse", { outcome: "success" })],
+    [hook("hook_started", "PostToolUse"), hook("hook_progress", "PostToolUse", { output: `${T1_HOOK_STEER} "${DECISION}".` })],
+    [{ type: "system", subtype: "hook_progress", data: { chunk: `${T1_HOOK_STEER} "x"` } }],
+  ]) {
+    const v = t1(t1One({ hooks: false, extra: hooks }), t1Two());
+    assert.equal(v.verdict, "PASS", `${JSON.stringify(hooks)} ${v.notes.join(" ")}`);
+    assert.ok(v.notes.includes("PostToolUse hook event after the Write: seen"));
+  }
+});
+
+test("T1-hook INCONCLUSIVE: only hook_started or hook_progress for PostToolUse after the Write, with no steer text, says so", () => {
+  for (const hooks of [
+    [hook("hook_started", "PostToolUse")],
+    [hook("hook_started", "PostToolUse"), hook("hook_progress", "PostToolUse", { output: "partial" })],
+    [hook("hook_started", "PostToolUse"), hook("hook_response", "SessionStart", { output: "other" })],
+  ]) {
+    const v = t1(t1One({ hooks: false, extra: hooks }), t1Two());
+    assert.equal(v.verdict, INCONCLUSIVE, JSON.stringify(hooks));
+    assert.equal(v.notes[0], HOOK_STARTED_ONLY_NOTE);
+    assert.ok(v.notes.includes("PostToolUse hook event after the Write: started only"));
+  }
+  assert.match(HOOK_STARTED_ONLY_NOTE, /only hook_started\/hook_progress was seen/);
+  // A capture in turn 1 is FAIL whatever was observed.
+  const captured = t1(t1One({ hooks: false, extra: [hook("hook_started", "PostToolUse"), toolUse("c0", CAPTURE, WORDED)] }), t1Two());
+  assert.equal(captured.verdict, "FAIL");
+  assert.match(captured.notes.join(" "), /captured before confirmation/);
 });
 
 test("T1-hook INCONCLUSIVE: everything else holds, but no PostToolUse event after the Write", () => {
@@ -288,6 +351,62 @@ test("the write rule: T1-hook's turn 1 alone, one Edit rule naming its one file;
     [["Edit(//tmp/x/CLAUDE.md)", "Edit(//tmp/x/other.md)"], "Edit(//tmp/x/CLAUDE.md)"],
     [[], "Edit(//tmp/x/CLAUDE.md)"],
   ]) assert.throws(() => assertWriteRules(o(list), expected), /write rule/, list.join(","));
+});
+
+// An fs whose realpathSync is the real one, or maps the paths ending in `tail` to `to(p)`; every call is kept.
+const realFs = (tail = null, to = (p) => p) => {
+  const asked = [];
+  const realpathSync = (p) => { asked.push(p); const r = nodefs.realpathSync(p); return tail && r.endsWith(tail) ? to(r) : r; };
+  return { fs: { ...nodefs, realpathSync }, asked };
+};
+const pathFs = (map) => {
+  const asked = [];
+  return { fs: { realpathSync: (p) => { asked.push(p); if (p in map) return map[p]; throw new Error("ENOENT"); } }, asked };
+};
+
+test("the write rule from the real path: composed from the directory's resolved real path; a real path elsewhere refuses", () => {
+  const cwd = path.resolve("/srv/row/cwd");
+  const same = pathFs({ [cwd]: cwd });
+  assert.equal(hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], cwd, same.fs), `Edit(${rulePath(path.join(cwd, "CLAUDE.md"))})`);
+  assert.deepEqual(same.asked, [cwd]); // the rule's directory came from realpathSync
+  // A trailing separator on the real path is the same directory in the rule's form.
+  assert.equal(hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], cwd, pathFs({ [cwd]: `${cwd}/` }).fs), `Edit(${rulePath(path.join(cwd, "CLAUDE.md"))})`);
+  // Linked through a parent: the real path is resolved from the nearest part that exists.
+  const parent = path.dirname(cwd);
+  assert.throws(() => hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], cwd, pathFs({ [parent]: "/data/row" }).fs), /resolves elsewhere \(a symlink or a short name\).*the row was not run/);
+  assert.throws(() => hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], cwd, pathFs({ [cwd]: "/srv/ROW/cwd" }).fs), /resolves elsewhere/);
+  // No fs, or a turn or row with no write: as before, and the fs is never read.
+  assert.equal(hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], cwd), `Edit(${rulePath(path.join(cwd, "CLAUDE.md"))})`);
+  const unused = pathFs({});
+  assert.equal(hookWriteRule(ROWS[T1H], ROWS[T1H].turns[1], cwd, unused.fs), null);
+  assert.equal(hookWriteRule(ROWS.T4, ROWS.T4.turns[0], cwd, unused.fs), null);
+  assert.deepEqual(unused.asked, []);
+});
+
+test("T1-hook through the row: a working directory whose real path is elsewhere refuses before any call, exit 2, with nothing reserved", async () => {
+  const b = box();
+  const { fs, asked } = realFs(`${path.sep}cwd`, (p) => path.join(path.dirname(p), "elsewhere"));
+  const out = await run(b, b.argv(T1H), [t1First(), t1Second()], { fs });
+  assert.equal(out.r.exitCode, 2);
+  assert.equal(out.r.refused, true);
+  assert.ok(out.d.io.errors.some((e) => /^refused: the row's working directory resolves elsewhere \(a symlink or a short name\).*the row was not run$/.test(e)), out.d.io.errors.join("\n"));
+  assert.equal(out.client.calls.length, 0);
+  assert.deepEqual(out.client.prompts, []);
+  assert.deepEqual(b.calls(), []);
+  assert.deepEqual(b.recordLines().filter((l) => l.type === "reserve"), []);
+  assert.equal(b.charged(), 0);
+  assert.ok(asked.some((p) => p.endsWith(`${path.sep}cwd`)));
+});
+
+test("T1-hook through the row: a working directory whose real path is its own runs, and the rule is built from that real path", async () => {
+  const b = box();
+  const { fs, asked } = realFs();
+  const out = await run(b, b.argv(T1H), [t1First(), t1Second()], { fs });
+  assert.equal(out.r.exitCode, 0, out.r.summary.notes.join(" "));
+  assert.equal(out.r.summary.verdict, "PASS");
+  const one = out.client.calls[0].options;
+  assert.ok(asked.includes(one.cwd));
+  assert.ok(one.allowedTools.includes(`Edit(${rulePath(path.join(nodefs.realpathSync(one.cwd), "CLAUDE.md"))})`));
 });
 
 test("another row cannot carry a write rule: one added to its options refuses before any call, exit 2", async () => {
@@ -425,6 +544,26 @@ test("T1-hook through the row: no PostToolUse event is INCONCLUSIVE, exit 1, aft
   assert.equal(out.r.exitCode, 1);
   assert.equal(out.r.summary.verdict, "FAIL");
   assert.match(out.r.summary.notes.join(" "), /besides CLAUDE\.md: stray\.txt/);
+});
+
+test("T1-hook through the row: turn 1's hook only started does not stop turn 2, and with turn 2 right the row is INCONCLUSIVE, exit 1", async () => {
+  const b = box();
+  const out = await run(b, b.argv(T1H), [t1First({ hooks: false, extra: [hook("hook_started", "PostToolUse")] }), t1Second()]);
+  assert.equal(out.client.calls.length, 2);
+  assert.equal(out.client.calls[1].options.resume, "h1");
+  assert.equal(out.r.exitCode, 1);
+  assert.equal(out.r.summary.verdict, INCONCLUSIVE);
+  assert.ok(out.r.summary.notes.includes(HOOK_STARTED_ONLY_NOTE));
+  assert.ok(out.r.summary.notes.includes("PostToolUse hook event after the Write: started only"));
+  assert.deepEqual(b.summary().hookEvents[0].events.map((e) => e.subtype), ["hook_started"]);
+});
+
+test("T2-hook through the row: a UserPromptSubmit event without the steer text is INCONCLUSIVE, exit 1, with the hand-read note", async () => {
+  const b = box();
+  const out = await run(b, b.argv(T2H), [[init({ session_id: "t2h" }), ...said("UserPromptSubmit", "{}"), assistantText(T2_OFFER), ok(T2_OFFER, { session_id: "t2h" })]]);
+  assert.equal(out.r.exitCode, 1);
+  assert.equal(out.r.summary.verdict, INCONCLUSIVE);
+  assert.ok(out.r.summary.notes.includes(HOOK_STEER_NOT_SEEN_NOTE));
 });
 
 test("other rows: no includeHookEvents and no write rule in their options, and the old note for a hook event ahead of init", async () => {

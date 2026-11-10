@@ -41,8 +41,10 @@
 // and ROUTE-1-QUADRON run with memory on only, and ROUTE-1-QUADRON is the control that names Quadron.
 
 import path from "node:path";
-import { OBSERVED_WRITE_TOOLS, Refusal } from "./guards.mjs";
+import { OBSERVED_WRITE_TOOLS, Refusal, resolveReal } from "./guards.mjs";
 import { BANNER } from "../../../plugins/claude-code/hooks/scripts/session-banner.mjs";
+import { CAPTURE_TEXT } from "../../../plugins/claude-code/hooks/scripts/prompt-trigger.mjs";
+import { contextText } from "../../../plugins/claude-code/hooks/scripts/memory-trigger.mjs";
 
 const q = (t) => `mcp__quadron__${t}`;
 export const CAPTURE_PLACEHOLDER = "<captureTool>";
@@ -88,6 +90,9 @@ export const CONNECTED_SENTENCE = "Quadron is connected, and this person keeps a
 // T2-hook: a stated decision in a capture phrase of the plugin's prompt trigger, with no ask to save.
 export const T2_HOOK_OFFER_PHRASE = "annually";
 const T2_HOOK_PROMPT = "I decided we bill annually only; monthly plans are ruled out.";
+// The prompt trigger's capture steer, from the plugin itself: T2-hook passes only with it in a
+// UserPromptSubmit hook event's recorded text.
+export const T2_HOOK_STEER = CAPTURE_TEXT;
 // T1-hook: the file the one allowed Write goes to, in the row's own working directory. A CLAUDE.md, so the
 // plugin's PostToolUse filter Edit(**/CLAUDE.md) matches it.
 const HOOK_WRITE_TARGET = "CLAUDE.md";
@@ -96,6 +101,11 @@ export const T1_HOOK_OFFER_PHRASE = "exact command";
 export const T1_HOOK_WORDS = "exact command that was run";
 const T1_HOOK_DECISION = "My standard: every release note names the exact command that was run.";
 const T1_HOOK_YES = "Yes, keep it in Quadron: every release note names the exact command that was run.";
+// The memory trigger's steer for an instructions file, from the plugin itself: the part ahead of the quoted
+// excerpt, which changes with what was written ("Quadron: you just updated their instructions file:").
+const EXCERPT_PROBE = "\u0000";
+const T1_STEER_FULL = contextText("instructions", EXCERPT_PROBE);
+export const T1_HOOK_STEER = T1_STEER_FULL.slice(0, T1_STEER_FULL.indexOf(EXCERPT_PROBE)).replace(/["\s]+$/, "");
 
 export const ROWS = {
   T2: {
@@ -314,9 +324,17 @@ export function hookWritePath(def, cwd) {
   return path.join(cwd, def.hookWriteTarget);
 }
 // The rule for the turn marked `allowWrite` on that row, or null. A path a rule would read as a pattern refuses.
-export function hookWriteRule(def, turn, cwd) {
+// With `fs`, the rule is composed from the working directory's real path (resolveReal in guards.mjs, links
+// followed), and a real path that is not the directory the row uses, read in the rule's own form, refuses:
+// the rule would name a path the session does not write to.
+const ruleDir = (p) => rulePath(p).replace(/\/+$/, "");
+export function hookWriteRule(def, turn, cwd, fs = null) {
   if (!def?.hookWriteTarget || !turn?.allowWrite) return null;
-  const target = rulePath(hookWritePath(def, cwd));
+  const dir = fs ? resolveReal(cwd, fs) : cwd;
+  if (fs && ruleDir(dir) !== ruleDir(path.resolve(cwd))) {
+    throw new Refusal("the row's working directory resolves elsewhere (a symlink or a short name), so its write rule cannot name the file the session writes; the row was not run");
+  }
+  const target = rulePath(hookWritePath(def, dir));
   if (RULE_PATTERN_CHARS_RE.test(target)) throw new Refusal("the working directory's path holds a character a permission rule reads as a pattern; refusing");
   return `${WRITE_RULE_TOOL}(${target})`;
 }

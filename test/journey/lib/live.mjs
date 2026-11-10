@@ -422,8 +422,9 @@ async function rowAttempt(ctx, def) {
       }
       const allowedTools = turn.tools.map((t) => (t === CAPTURE_PLACEHOLDER ? captureTool ?? pickCaptureTool(null) : t));
       // A `hookWriteTarget` row's writing turn alone approves its one file; every other turn approves no
-      // write. A path the rule cannot name exactly refuses here, as the options guard does, before any reservation.
-      const writeRule = hookWriteRule(def, turn, cwd);
+      // write. A path the rule cannot name exactly refuses here, as the options guard does, before any reservation:
+      // a pattern character, or a working directory whose real path is another (the rule is composed from the real path).
+      const writeRule = hookWriteRule(def, turn, cwd, fs);
       if (writeRule) allowedTools.push(writeRule);
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
