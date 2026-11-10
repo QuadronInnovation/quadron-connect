@@ -94,7 +94,7 @@ const T2_HOOK_PROMPT = "I decided we bill annually only; monthly plans are ruled
 // UserPromptSubmit hook event's recorded text.
 export const T2_HOOK_STEER = CAPTURE_TEXT;
 // T1-hook: the file the one allowed Write goes to, in the row's own working directory. A CLAUDE.md, so the
-// plugin's PostToolUse filter Edit(**/CLAUDE.md) matches it.
+// plugin's PostToolUse script (memory-trigger.mjs) treats it as an instructions file.
 const HOOK_WRITE_TARGET = "CLAUDE.md";
 export const T1_HOOK_OFFER_PHRASE = "exact command";
 // The person's words, which turn 2's capture input must hold.
@@ -303,9 +303,9 @@ export const turnTools = (def, turn) => (turn.probe ? [] : [...new Set([
 ])]);
 
 // The one write a row may approve. Edit rules cover every built-in tool that edits a file, Write
-// included (code.claude.com/docs/en/permissions, "Read and Edit"), so the rule is written as Edit; the
-// plugin's own PostToolUse filter has the same form. `//` starts an absolute path, and a Windows path
-// is written in the POSIX form the rules match against (C:\a becomes //c/a). One line changes the tool.
+// included (code.claude.com/docs/en/permissions, "Read and Edit"), so the rule is written as Edit.
+// `//` starts an absolute path, and a Windows path is written in the POSIX form the rules match
+// against (C:\a becomes //c/a). One line changes the tool.
 export const WRITE_RULE_TOOL = "Edit";
 const HOOK_WRITE_TARGET_RE = /^[\w-][\w.-]*$/;
 // Characters a rule would read as a pattern: a path holding one could match more than the one file.
