@@ -2,18 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, run, excerpt, classifyPath } from '../scripts/memory-trigger.mjs';
+import {
+  decide as decideIn, run as runIn, excerpt, classifyPath, normalisePath, usableConfigDir,
+} from '../scripts/memory-trigger.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/memory-trigger.mjs', import.meta.url));
+// The runner's own CLAUDE_CONFIG_DIR must not leak into the cases; each passes its env.
+const CHILD_ENV = { ...process.env, CLAUDE_CONFIG_DIR: '' };
+const decide = (payload, env = {}, home) => decideIn(payload, env, home);
+const run = (raw, env = {}, home) => runIn(raw, env, home);
 
-function write(file_path, content) {
-  return { hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path, content } };
+function write(file_path, content, extra = {}) {
+  return { hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path, content }, ...extra };
 }
-function edit(file_path, new_string) {
+function edit(file_path, new_string, extra = {}) {
   return {
     hook_event_name: 'PostToolUse',
     tool_name: 'Edit',
     tool_input: { file_path, old_string: 'x', new_string },
+    ...extra,
   };
 }
 function context(r) {
@@ -73,6 +80,143 @@ test('non-matches produce nothing', () => {
   nothing(decide({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { file_path: '/r/CLAUDE.md' } }));
 });
 
+const fires = (r) => assert.ok(context(r).startsWith('Quadron: you just saved a memory: "'));
+const tp = (transcript_path) => ({ transcript_path });
+
+test('normalisePath: one key for C:\\x and /c/x, case-folded; POSIX keeps case', () => {
+  assert.equal(normalisePath('C:\\Users\\U\\cfg\\'), '/c/users/u/cfg');
+  assert.equal(normalisePath('/c/Users/U/cfg'), '/c/users/u/cfg');
+  assert.equal(normalisePath('/home/U/cfg/'), '/home/U/cfg');
+  assert.equal(normalisePath('/a/b/../c/./d.md'), '/a/c/d.md');
+});
+
+test('default home layout, POSIX and Windows, with and without transcript_path', () => {
+  fires(decide(write('/home/u/.claude/projects/-home-u-app/memory/a.md', 'Body')));
+  fires(decide(write('/home/u/.claude/projects/-home-u-app/memory/a.md', 'Body',
+    tp('/home/u/.claude/projects/-home-u-app/s1.jsonl'))));
+  fires(decide(edit('C:\\Users\\u\\.claude\\projects\\C--Users-u-app\\memory\\a.md', 'Body',
+    tp('C:\\Users\\u\\.claude\\projects\\C--Users-u-app\\s1.jsonl'))));
+  // The /c/ form against a drive-letter transcript, and a subpath under memory/.
+  fires(decide(write('/c/Users/u/.claude/projects/C--app/memory/topic/a.md', 'Body',
+    tp('C:\\Users\\u\\.claude\\projects\\C--app\\s1.jsonl'))));
+});
+
+test('CLAUDE_CONFIG_DIR: memory under it fires, memory elsewhere is silent', () => {
+  const env = { CLAUDE_CONFIG_DIR: '/srv/cfg' };
+  fires(decide(write('/srv/cfg/projects/-w-app/memory/a.md', 'Body'), env));
+  fires(decide(write('/srv/cfg/projects/-w-app/memory/a.md', 'Body', tp('/srv/cfg/projects/-w-app/s.jsonl')), env));
+  nothing(decide(write('/home/u/.claude/projects/-w-app/memory/a.md', 'Body'), env));
+  fires(decide(edit('d:\\CFG\\projects\\D--app\\memory\\a.md', 'Body'), { CLAUDE_CONFIG_DIR: 'D:\\cfg\\' }));
+  nothing(decide(edit('E:\\cfg\\projects\\D--app\\memory\\a.md', 'Body'), { CLAUDE_CONFIG_DIR: 'D:\\cfg' }));
+  // Env and transcript disagree: each known source must agree, so silent.
+  nothing(decide(write('/srv/cfg/projects/p/memory/a.md', 'Body', tp('/home/u/.claude/projects/p/s.jsonl')), env));
+  // `..` cannot walk out of the config directory and back in by shape.
+  nothing(decide(write('/srv/cfg/projects/p/memory/../../../../home/u/src/app/projects/alpha/memory/n.md', 'Body'), env));
+  fires(run(JSON.stringify(write('/srv/cfg/projects/p/memory/a.md', 'Body')), env));
+});
+
+test('CLAUDE_CONFIG_DIR: a leading ~ expands to the home directory', () => {
+  assert.equal(usableConfigDir('~/.cfg', '/home/u'), '/home/u/.cfg');
+  assert.equal(usableConfigDir('~', '/home/u/'), '/home/u');
+  assert.equal(usableConfigDir('~\\.cfg', 'C:\\Users\\u'), 'C:\\Users\\u\\.cfg');
+  fires(decide(write('/home/u/.cfg/projects/x/memory/a.md', 'Body'), { CLAUDE_CONFIG_DIR: '~/.cfg' }, '/home/u'));
+  nothing(decide(write('/home/u/.claude/projects/x/memory/a.md', 'Body'), { CLAUDE_CONFIG_DIR: '~/.cfg' }, '/home/u'));
+  fires(decide(edit('C:\\Users\\u\\.cfg\\projects\\x\\memory\\a.md', 'Body'),
+    { CLAUDE_CONFIG_DIR: '~\\.cfg' }, 'C:\\Users\\u'));
+});
+
+test('CLAUDE_CONFIG_DIR that is not absolute is ignored, never silencing a memory write', () => {
+  for (const v of ['cfg', './cfg', '.claude', '~user/cfg']) {
+    assert.equal(usableConfigDir(v, '/home/u'), '', v);
+    fires(decide(write('/home/u/.claude/projects/x/memory/a.md', 'Body'), { CLAUDE_CONFIG_DIR: v }, '/home/u'));
+  }
+  // A home directory that is itself unusable makes `~` unusable too.
+  assert.equal(usableConfigDir('~/.cfg', ''), '');
+  // The transcript check still applies when the env value is ignored.
+  nothing(decide(write('/home/u/.claude/projects/x/memory/a.md', 'Body', tp('/srv/cfg/projects/x/s.jsonl')),
+    { CLAUDE_CONFIG_DIR: './cfg' }, '/home/u'));
+  for (const v of ['/srv/cfg', 'D:\\cfg', 'D:/cfg', '/c/cfg', '']) {
+    assert.equal(usableConfigDir(v, '/home/u'), v, v);
+  }
+});
+
+test('config directory known only through transcript_path', () => {
+  const t = tp('/opt/claude-cfg/projects/-w-app/s.jsonl');
+  fires(decide(write('/opt/claude-cfg/projects/-w-app/memory/a.md', 'Body', t)));
+  // Another project under the same projects/ parent (memory is keyed by the git root).
+  fires(decide(write('/opt/claude-cfg/projects/-w-app-worktree/memory/a.md', 'Body', t)));
+  fires(decide(write('/opt/claude-cfg/projects/-w-app/memory/a.md', 'Body',
+    tp('/opt/claude-cfg/projects/-w-app/s/subagents/agent-1.jsonl'))));
+  nothing(decide(write('/home/u/.claude/projects/-w-app/memory/a.md', 'Body', t)));
+  // A transcript_path with no projects/ segment says nothing; the shape decides.
+  fires(decide(write('/opt/claude-cfg/projects/-w-app/memory/a.md', 'Body', tp('/tmp/s.jsonl'))));
+});
+
+test('an ordinary repository with projects/<x>/memory/ is silent when the config dir is known', () => {
+  const repo = '/home/u/src/app/projects/alpha/memory/notes.md';
+  nothing(decide(write(repo, 'Body', tp('/home/u/.claude/projects/-home-u-src-app/s.jsonl'))));
+  nothing(decide(write(repo, 'Body'), { CLAUDE_CONFIG_DIR: '/home/u/.claude' }));
+  nothing(decide(write('C:\\src\\app\\projects\\alpha\\memory\\notes.md', 'Body',
+    tp('C:\\Users\\u\\.claude\\projects\\C--src-app\\s.jsonl'))));
+  // With neither source the shape alone decides, so it fires; the hook always sends transcript_path.
+  fires(decide(write(repo, 'Body')));
+  // Only markdown counts.
+  nothing(decide(write('/home/u/.claude/projects/p/memory/a.txt', 'Body')));
+  nothing(decide(write('/home/u/.claude/projects/p/memory', 'Body')));
+});
+
+test('MEMORY.md, agent memory and frontmatter-only stay skipped under a relocated dir', () => {
+  const env = { CLAUDE_CONFIG_DIR: '/srv/cfg' };
+  const t = tp('/srv/cfg/projects/p/s.jsonl');
+  nothing(decide(write('/srv/cfg/projects/p/memory/MEMORY.md', '- [a](a.md) index line', t), env));
+  nothing(decide(write('/srv/cfg/agent-memory/r/a.md', 'Subagent note body', t), env));
+  nothing(decide(write('/srv/cfg/projects/p/memory/agent-memory/a.md', 'Subagent note body', t), env));
+  nothing(decide(write('/srv/cfg/projects/p/memory/agent-memory-local/a.md', 'Subagent note body', t), env));
+  nothing(decide(edit('/srv/cfg/projects/p/memory/a.md', FM, t), env));
+  nothing(decide(edit('D:\\cfg\\projects\\p\\memory\\memory.md', 'index', tp('D:\\cfg\\projects\\p\\s.jsonl')),
+    { CLAUDE_CONFIG_DIR: 'D:\\cfg' }));
+  fires(decide(edit('/srv/cfg/projects/p/memory/a.md', `${FM}Prefers small PRs.`, t), env));
+});
+
+test('instruction files classify at any absolute path, including directly in a config directory', () => {
+  for (const p of ['/home/u/.claude/CLAUDE.md', '/srv/cfg/CLAUDE.md', 'C:\\Users\\u\\.claude\\CLAUDE.md',
+    '/c/Users/u/.claude/CLAUDE.md', '/home/u/src/app/CLAUDE.local.md', 'D:\\src\\app\\CLAUDE.local.md']) {
+    assert.equal(classifyPath(p), 'instructions', p);
+  }
+  // The config directory does not narrow instruction files.
+  const ctx = context(decide(edit('/srv/cfg/CLAUDE.md', 'Use pnpm, never npm.', tp('/srv/cfg/projects/p/s.jsonl')),
+    { CLAUDE_CONFIG_DIR: '/home/u/.claude' }));
+  assert.ok(ctx.startsWith('Quadron: you just updated their instructions file: "Use pnpm, never npm."'));
+});
+
+// Permission-rule glob as the docs describe it: `//` anchors at the root, `**` spans
+// directories, `*` stays within one segment. Paths are in the POSIX (/c/) form rules see.
+function ruleMatches(rule, p) {
+  const glob = /^Edit\(\/\/(.+)\)$/.exec(rule)[1];
+  const re = glob.split('/').map((seg, i, all) => {
+    if (seg === '**') return i === all.length - 1 ? '.*' : '(?:[^/]+/)*';
+    return seg.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + (i === all.length - 1 ? '' : '/');
+  }).join('');
+  return new RegExp(`^/${re}$`).test(p);
+}
+const RULES = ['Edit(//**/projects/*/memory/**)', 'Edit(//**/CLAUDE.md)', 'Edit(//**/CLAUDE.local.md)'];
+
+test('a path matches at most one filter by shape; the one overlap classifies the same every time', () => {
+  for (const p of ['/home/u/.claude/projects/-x/memory/a.md', '/c/Users/u/.claude/projects/C--x/memory/a.md',
+    '/srv/cfg/projects/p/memory/topic/a.md', '/home/u/.claude/CLAUDE.md', '/c/src/app/CLAUDE.local.md',
+    '/home/u/src/app/CLAUDE.md', '/home/u/src/app/src/x.ts']) {
+    assert.ok(RULES.filter((r) => ruleMatches(r, p)).length <= 1, p);
+  }
+  // A memory file named CLAUDE.md matches the memory and the CLAUDE.md filter. Both handlers
+  // run the same script on the same input, so each classifies it as an instructions file and
+  // injects the same line.
+  const edge = '/home/u/.claude/projects/-x/memory/CLAUDE.md';
+  assert.equal(RULES.filter((r) => ruleMatches(r, edge)).length, 2);
+  assert.equal(classifyPath(edge), 'instructions');
+  assert.equal(classifyPath(edge, { configDir: '/elsewhere' }), 'instructions');
+  assert.equal(decide(write(edge, 'Body')).stdout, decide(write(edge, 'Body')).stdout);
+});
+
 test('excerpt collapses whitespace and truncates at 200 chars with an ellipsis', () => {
   assert.equal(excerpt('a \n\t b'), 'a b');
   const exact = 'x'.repeat(200);
@@ -100,6 +244,7 @@ test('child process: matching payload on stdin yields JSON on stdout', () => {
   const r = spawnSync(process.execPath, [SCRIPT], {
     input: JSON.stringify(write('/home/u/.claude/projects/-x/memory/feedback_y.md', `${FM}Ship on Fridays never.`)),
     encoding: 'utf8',
+    env: CHILD_ENV,
   });
   assert.equal(r.status, 0);
   assert.equal(r.stderr, '');
@@ -109,7 +254,7 @@ test('child process: matching payload on stdin yields JSON on stdout', () => {
 });
 
 test('child process: malformed stdin exits 0, no stdout, one stderr line', () => {
-  const r = spawnSync(process.execPath, [SCRIPT], { input: '{oops', encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [SCRIPT], { input: '{oops', encoding: 'utf8', env: CHILD_ENV });
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '');
   assert.equal(r.stderr.split('\n').filter(Boolean).length, 1);

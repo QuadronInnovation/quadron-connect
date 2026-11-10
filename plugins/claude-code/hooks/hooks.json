@@ -7,17 +7,17 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/memory-trigger.mjs\"",
-            "if": "Edit(~/.claude/projects/**/memory/**)"
+            "if": "Edit(//**/projects/*/memory/**)"
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/memory-trigger.mjs\"",
-            "if": "Edit(**/CLAUDE.md)"
+            "if": "Edit(//**/CLAUDE.md)"
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/memory-trigger.mjs\"",
-            "if": "Edit(**/CLAUDE.local.md)"
+            "if": "Edit(//**/CLAUDE.local.md)"
           }
         ]
       }

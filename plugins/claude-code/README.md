@@ -65,7 +65,7 @@ These hooks supplement the MCP server and the quadron skill; SKILL.md and the se
 
   A capture phrase injects:
   > Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.
-- **PostToolUse** on `Write|Edit`: runs `scripts/memory-trigger.mjs` for auto-memory files under `~/.claude/projects/*/memory/`, `CLAUDE.md` and `CLAUDE.local.md`. `MEMORY.md`, subagent memory and frontmatter-only edits are skipped. It injects:
+- **PostToolUse** on `Write|Edit`: runs `scripts/memory-trigger.mjs` for auto-memory files in `projects/*/memory/` of whichever config directory is in use (`~/.claude` by default, or `CLAUDE_CONFIG_DIR`), `CLAUDE.md` and `CLAUDE.local.md`. The three `if` path filters are anchored at the filesystem root (`//**/…`), so they match outside the working directory and home. The memory filter is broad; the script keeps only Markdown files whose `projects` directory is the config directory's, judged by `CLAUDE_CONFIG_DIR` and the hook input's `transcript_path` when present. `MEMORY.md`, subagent memory and frontmatter-only edits are skipped. It injects:
   > Quadron: you just saved a memory: "<excerpt>". If it records the person's own decision, standard or preference, offer once in one line to keep it in their Quadron record, quoting their words; call future_you_capture (or quad_commit if that is not listed) only on a yes. If it is your own note, do nothing.
 
   For `CLAUDE.md` and `CLAUDE.local.md` the wording is "you just updated their instructions file" in place of "you just saved a memory". `<excerpt>` stands for the edited text.
@@ -78,13 +78,16 @@ Malformed or empty stdin, or an unexpected event, gives exit 0, no output and on
 - [Hooks guide](https://code.claude.com/docs/en/hooks-guide): "Filter by tool name and arguments with the `if` field"
 - [Plugin components](https://code.claude.com/docs/en/plugins/components): "Hooks"
 - [Memory](https://code.claude.com/docs/en/memory): "Storage location"
+- [Permissions](https://code.claude.com/docs/en/permissions): "How path patterns match"
 
 **Untested until a live run:**
 
-1. Whether the `if` path filters match real memory paths on Windows and with `~`.
+1. Whether the `//**/…` path filters match real memory and instruction-file paths, on Windows and with a relocated config directory.
 2. Whether `--plugin-dir` loads plugin hooks.
 3. Whether the model acts on the injected text (offers, then calls only on a yes).
-4. Memory written to a custom `autoMemoryDirectory` is not covered.
+4. Memory written to a custom `autoMemoryDirectory` is still not covered: it sits outside the config directory's `projects/*/memory/`, which is all the filter and script accept.
+   The `CLAUDE_CONFIG_DIR` check compares text, so a config directory reached through a symlink, or one differing only in letter case on a case-insensitive POSIX filesystem, is not matched.
+5. That `if` anchors a relative pattern at the working directory, and `//` at the filesystem root, is read from the docs' statement that `if` "uses permission rule syntax", not from a run.
 
 claude.ai runs no hooks; there the server-side tool descriptions govern.
 
