@@ -1,6 +1,6 @@
 {
   "name": "quadron",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "SEE LICENSE IN LICENSE",
   "description": "Read the person's Quadron record and capture only what they approve, over the Quadron MCP connector.",
   "author": { "name": "Quadron Holdings, Inc." },
