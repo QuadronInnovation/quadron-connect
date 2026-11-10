@@ -64,7 +64,7 @@ async function signIn() {
 // shell), and failing the whole install over it would be wrong when the hooks are the harder half.
 function registerMcp() {
   try {
-    execFileSync("claude", ["mcp", "add", "--transport", "http", "quadron", MCP_URL],
+    execFileSync("claude", ["mcp", "add", "--scope", "user", "--transport", "http", "quadron", MCP_URL],
                  { stdio: "pipe" });
     return { done: true };
   } catch (e) {
@@ -99,7 +99,7 @@ async function cmdInstall() {
   if (m.done) say(`${ok("✓")} MCP server registered${m.already ? " (already present)" : ""}`);
   else {
     say(`${warn("!")} could not register the MCP server automatically: ${m.reason}`);
-    say(`  Add it by hand:  claude mcp add --transport http quadron ${MCP_URL}`);
+    say(`  Add it by hand:  claude mcp add --scope user --transport http quadron ${MCP_URL}`);
   }
 
   if (!installHooks()) process.exit(1);
