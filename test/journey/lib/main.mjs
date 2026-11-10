@@ -121,12 +121,14 @@ function dryReport(f, io, explicit, red) {
     const offer = d.offerPhrase ? `; offer phrase "${d.offerPhrase}"` : "";
     const surface = d.noPlugin ? "; connector only, no plugin or skill" : "";
     const reading = d.diagnostic ? "; diagnostic: never a pass, exit 0 whichever way the turn goes" : "";
-    const shown = d.observeWrites ? "; Write and Edit shown and never allowed, so a save to a file is seen and denied" : "";
+    const shown = d.observeWrites ? "; Write and Edit shown and never allowed, so a save to a file is seen and denied"
+      : d.hookWriteTarget ? `; Write and Edit shown, and one rule allows a write to ${d.hookWriteTarget} in the row's working directory on turn ${d.turns.findIndex((t) => t.allowWrite) + 1} only; every other write is denied and fails the row` : "";
+    const hooks = d.hookEvents ? "; hook events recorded (includeHookEvents) and read by the verdict; a hook not observed is INCONCLUSIVE, never a pass" : "";
     const probeTurn = d.turns.findIndex((t) => t.probe) + 1;
     const memory = d.autoMemory ? `; auto memory on, from --auto-memory-settings, project dir name ${d.projectDirName}, with the memory directory and CLAUDE.md watched` +
       (probeTurn ? `; turn ${probeTurn} is a memory-on probe with no tools (cap ${d.turns[probeTurn - 1].maxTurns}), asking for the reference code seeded in MEMORY.md` : "")
       : d.memoryOff ? "; auto memory off (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1), so no memory-on probe; the verdict reads turn 1 alone" : "";
-    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}${shown}${memory}`);
+    out(`would run ${r}: ${d.turns.length} turn(s), caps ${caps}, one command and one session${offer}${surface}${reading}${shown}${memory}${hooks}`);
   }
   out(explicit ? "dry run (explicit)" : "dry run (default: pass --live to run for real)");
 }

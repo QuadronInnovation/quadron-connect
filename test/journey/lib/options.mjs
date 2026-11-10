@@ -19,7 +19,12 @@
 // and the load check on init), and through the child's environment auto memory (on for an `autoMemory`
 // row only: see rows.mjs), built-in agents,
 // background tasks and marketplace installs. A settings file carrying hooks refuses. Plugin hooks are
-// not checked: a hook event ahead of init adds a note to the summary, and nothing more.
+// not checked: a hook event ahead of init adds a note to the summary, and nothing more. The plugin's
+// hooks load with the plugin (a local plugin loads "skills, hooks, agents, and commands", SdkPluginConfig
+// on code.claude.com/docs/en/agent-sdk/typescript). A `hookEvents` row (rows.mjs) alone also sends
+// `includeHookEvents: true` (same page), so the stream carries system hook_started, hook_progress and
+// hook_response messages for its verdict to read; SessionStart's come before init. Every other row's
+// options are as they were, with no such key.
 //
 // `tools` is the session's built-in set, an array of tool names (code.claude.com/docs/en/agent-sdk/typescript).
 // It is always stated: the default set is the full one, including a shell-capable PowerShell on
@@ -56,7 +61,7 @@ export function inScope(toolName, input, { root, fs }) {
 
 export function buildOptions({
   model, effort, sessionUsd, maxTurns, tools, allowedTools, resume, settingsPath, pluginDir,
-  mcpServers, childEnv, cwd, noPlugin = false, observeWrites = false,
+  mcpServers, childEnv, cwd, noPlugin = false, observeWrites = false, hookEvents = false,
 }) {
   const o = {
     settings: settingsPath, // flag-settings layer (sdk.d.ts:2271-2289), holds the web and browser deny rules
@@ -67,6 +72,7 @@ export function buildOptions({
     allowedTools,
     // An `observeWrites` row shows Write and Edit so a wrong save route can be seen; they stay off
     // `allowedTools`, so dontAsk denies each call. The Edit deny pattern for the SDK package stays.
+    // A `hookWriteTarget` row shows them the same way (live.mjs passes showsWrites from rows.mjs).
     disallowedTools: DISALLOWED_TOOLS.filter((t) => !(observeWrites && OBSERVED_WRITE_TOOLS.includes(t))),
     permissionMode: "dontAsk",
     systemPrompt: { type: "preset", preset: "claude_code" },
@@ -85,5 +91,6 @@ export function buildOptions({
   if (cwd) o.cwd = cwd;
   if (mcpServers) o.mcpServers = mcpServers;
   if (resume) o.resume = resume;
+  if (hookEvents) o.includeHookEvents = true;
   return o;
 }

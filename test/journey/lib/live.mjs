@@ -5,7 +5,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 
 import {
-  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, PROJECT_DIR_MIN_VERSION, assertAutoMemory, versionAtLeast, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, isMemoryPath, readHead, scanToolUses, snapshotTree, toleratedInitTools,
+  EXIT, Refusal, CONNECTOR_VARS, MCP_RESOURCE_TOOLS, PROJECT_DIR_MIN_VERSION, assertAutoMemory, assertWriteRules, versionAtLeast, assertSessionOptions, assertOutsideClone, buildChildEnv, credentialFilesIn, isMemoryPath, readHead, scanToolUses, snapshotTree, toleratedInitTools,
 } from "./guards.mjs";
 import {
   SpendTracker, MAX_OUTPUT_TOKENS, NOT_SHOWN, appendEntry, bindLimit, checkAttempts, checkLedgerMatchesRecord, closeCall, ledgerLimit, markConfirmed,
@@ -14,9 +14,9 @@ import {
 import { appendLimit, appendReservation, appendSettlement, readRecord, recordModelTotal, recordTotal } from "./campaign.mjs";
 import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./connector.mjs";
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
-import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, nonceCode, pickCaptureTool, seedLine, turnTools } from "./rows.mjs";
+import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, hookWriteRule, nonceCode, pickCaptureTool, seedLine, showsWrites, turnTools } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
-import { INCONCLUSIVE, VERDICTS, collect, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
+import { INCONCLUSIVE, VERDICTS, collect, hookSummary, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
 import { runGatedCall } from "./call.mjs";
 import { Evidence, newUniqueDir } from "./evidence.mjs";
@@ -143,10 +143,12 @@ const streamFacts = (call, s) => ({
 
 // A session's options, held to the guard before anything is reserved. `testOptionsHook` is how a test
 // shows the guard refusing: main takes it as a dependency, no flag sets it, and it runs before the guard.
+// `writeRule`: the one write rule this turn may approve (hookWriteRule in rows.mjs), or none.
 function sessionOptions(ctx, args) {
   const options = (ctx.testOptionsHook ?? ((o) => o))(buildOptions(args));
   assertSessionOptions(options);
   assertAutoMemory(options, args.autoMemory === true, args.projectDirName);
+  assertWriteRules(options, args.writeRule ?? null);
   return options;
 }
 // Refuses before any form creates a directory, takes a lock, mints a token or loads the SDK.
@@ -364,8 +366,9 @@ async function rowAttempt(ctx, def) {
   // working directory is the plugin directory, which is normally inside the clone.
   const beforeClone = snapshotTree(repoRoot, fs);
   const beforeTree = def.cwd === "plugin" ? snapshotTree(cwd, fs) : null;
-  // An `observeWrites` row's working directory is new and empty: anything in it afterwards was written there.
-  const beforeCwd = def.observeWrites ? snapshotTree(cwd, fs) : null;
+  // An `observeWrites` or `hookWriteTarget` row's working directory is new and empty: anything in it
+  // afterwards was written there.
+  const beforeCwd = showsWrites(def) ? snapshotTree(cwd, fs) : null;
 
   const summary = {
     partial: false, row, model: f.model, effort: f.effort, mode: "not bare",
@@ -418,10 +421,15 @@ async function rowAttempt(ctx, def) {
         break;
       }
       const allowedTools = turn.tools.map((t) => (t === CAPTURE_PLACEHOLDER ? captureTool ?? pickCaptureTool(null) : t));
+      // A `hookWriteTarget` row's writing turn alone approves its one file; every other turn approves no
+      // write. A path the rule cannot name exactly refuses here, as the options guard does, before any reservation.
+      const writeRule = hookWriteRule(def, turn, cwd);
+      if (writeRule) allowedTools.push(writeRule);
       const options = sessionOptions(ctx, {
         model: f.model, effort: f.effort, sessionUsd: budget.sessionUsd, maxTurns: turn.maxTurns, tools: turnTools(def, turn), allowedTools,
         resume: i > 0 ? sessionId : undefined, settingsPath, pluginDir: f["plugin-dir"],
-        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin), observeWrites: Boolean(def.observeWrites), autoMemory, projectDirName,
+        mcpServers, childEnv, cwd, noPlugin: Boolean(def.noPlugin), observeWrites: showsWrites(def), autoMemory, projectDirName,
+        hookEvents: Boolean(def.hookEvents), writeRule,
       });
 
       let can, entry;
@@ -438,11 +446,14 @@ async function rowAttempt(ctx, def) {
       }
       callEntries.push(entry);
 
+      // A `hookEvents` row keeps every message the call saw, so the hook messages ahead of init, which the
+      // pump passes over and keeps out of `call.messages`, reach its verdict as well as the evidence.
+      const seenMessages = [];
       const call = await runGatedCall({
         client, options, prompt: turn.prompt, def: { ...def, model: f.model, firstTurn: i === 0 }, lifts, timeoutMs: timeoutMs ?? DEFAULT_INIT_TIMEOUT_MS, deadline,
-        abortController: new AbortController(), onMessage: (m) => evidence.message(m),
+        abortController: new AbortController(), onMessage: (m) => { evidence.message(m); if (def.hookEvents) seenMessages.push(m); },
       });
-      const s = collect(call.messages);
+      const s = def.hookEvents ? collect(call.messages, seenMessages) : collect(call.messages);
       streams.push(s);
       for (const m of call.messages) if (m.type === "system" && m.subtype === "init" && Array.isArray(m.tools)) m.tools.forEach((t) => initToolsSeen.add(t));
       summary.init = summary.init ?? call.initRecord;
@@ -457,7 +468,7 @@ async function rowAttempt(ctx, def) {
       // wait on an early init, or the check before the first prompt.
       const polledConnected = call.initRecord?.servers?.find((m) => m.name === SERVER_NAME)?.status === "connected" || call.initRecord?.connectorStatus?.final === "connected";
       if (initStatuses(call.messages).some((status, n) => status === "pending" && !(n === 0 && polledConnected))) serverPending = true;
-      const rowEnds = i + 1 === def.turns.length || call.timedOut || call.error || s.cut_off || turnGate(row, s) !== null;
+      const rowEnds = i + 1 === def.turns.length || call.timedOut || call.error || s.cut_off || turnGate(row, s, { cwd }) !== null;
       const neverLoaded = def.connector && serverPending && rowEnds && call.promptYielded && !call.gate &&
         !streams.some(connectorCalled) && !scanToolUses(s.tool_uses, lifts).length;
 
@@ -534,7 +545,7 @@ async function rowAttempt(ctx, def) {
       }
       if (s.result?.subtype === "error_max_budget_usd") { stop("the per-call ceiling was reached", EXIT.STOPPED); break; }
       if (i + 1 < def.turns.length) {
-        const why = turnGate(row, s);
+        const why = turnGate(row, s, { cwd });
         if (why) { failRow(why); break; }
         // A record only: the next turn needs a capture tool and turn 1's init lists neither, so it goes on with the fallback.
         const listed = streams[0].init?.tools;
@@ -560,7 +571,9 @@ async function rowAttempt(ctx, def) {
     exitCode = EXIT.AUTH;
   } else if (summary.verdict === null && !summary.partial) {
     const filesWritten = beforeCwd ? changedEntries(beforeCwd, afterTurn1.cwd) : [];
-    const routed = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, memoryChanges });
+    // Every turn's writes, for a `hookWriteTarget` row, whose one allowed file is written on turn 1.
+    const filesWrittenAll = beforeCwd ? changedEntries(beforeCwd, snapshotTree(cwd, fs)) : [];
+    const routed = VERDICTS[row](streams, { routingBlocked: f["routing-blocked"] ? red.text(f["routing-blocked"]) : null, judgmentId, savedWording, filesWritten, filesWrittenAll, memoryChanges, cwd });
     // Only an `autoMemory` row has a seed, so every ON routing row is read with its probe and a
     // `memoryOff` row (one turn, no probe) never is: its verdict is turn 1's alone.
     const v = seed ? memoryProbeVerdict(routed, probe, { code: seed.code, memoryChanges }) : routed;
@@ -588,13 +601,18 @@ async function rowAttempt(ctx, def) {
     return { name: u.name, input: u.input, result: r?.text ?? null, isError: r?.is_error ?? null };
   }));
   // Plain notes, with no effect on any verdict. A resource tool needs no permission, so a call to one
-  // is not on any allow-list; a hook event ahead of init means a plugin's hook ran, which nothing checks.
+  // is not on any allow-list; a hook event ahead of init means a plugin's hook ran, which nothing checks
+  // outside a `hookEvents` row.
   for (const name of MCP_RESOURCE_TOOLS) {
     if (summary.toolCalls.some((c) => c.name === name)) summary.notes.push(`${name} was called: it needs no permission, so no allow-list covers it`);
   }
   if (def.noPlugin && initToolsSeen.has("Skill")) summary.notes.push("Skill listed in init");
+  // On a `hookEvents` row they are the row's subject: each turn's hook events, as {hook_event, hook_name,
+  // subtype, text}, from the streams so a stop that reaches no verdict has them too. The whole messages are
+  // in stream.jsonl.
   const hookLabels = [...new Set(summary.turns.flatMap((t) => t.messageOrder ?? []).filter((l) => /(^|:)hook_/.test(l)))];
-  if (hookLabels.length) summary.notes.push(`hook events came before init (${hookLabels.join(", ")}); plugin hooks are not checked`);
+  if (hookLabels.length) summary.notes.push(`hook events came before init (${hookLabels.join(", ")}); ${def.hookEvents ? "read by this row's verdict (see hookEvents)" : "plugin hooks are not checked"}`);
+  if (def.hookEvents) summary.hookEvents = streams.map((s, i) => ({ turn: i + 1, events: hookSummary(s.hook_events) }));
   const initMsg = streams.find((s) => s.init)?.init;
   if (initMsg) {
     summary.init = {

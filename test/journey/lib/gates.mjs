@@ -20,7 +20,7 @@
 // reloadPlugins() is not used: its error_count has no comment saying what it counts.
 
 import { EXIT, OBSERVED_WRITE_TOOLS, assertSessionOptions, fastModeOn, fastModeStatedOff, scanInitTools, toleratedInitTools, unexpectedInitTools, versionAtLeast } from "./guards.mjs";
-import { SERVER_NAME } from "./rows.mjs";
+import { SERVER_NAME, showsWrites } from "./rows.mjs";
 
 // The one place any path starts a query.
 export function openQuery(client, args) {
@@ -93,10 +93,10 @@ function checkConnectorStatus(status) {
 // asked for, and a turn that lists Skill cannot run without it: both are load failures, no result about
 // the product. ToolSearch is not required, and connector names are recorded in the summary, not required.
 // The tolerated names (see toleratedInitTools) pass, and a row's summary records them. On a row with
-// `observeWrites`, Write and Edit pass when the turn's `tools` names them.
+// `observeWrites` or `hookWriteTarget` (showsWrites), Write and Edit pass when the turn's `tools` names them.
 function checkTurnTools(listed, def, lifts) {
   const tools = def.tools ?? [];
-  const extra = unexpectedInitTools(listed, tools, lifts, toleratedInitTools(listed, def), def.observeWrites ? OBSERVED_WRITE_TOOLS : []);
+  const extra = unexpectedInitTools(listed, tools, lifts, toleratedInitTools(listed, def), showsWrites(def) ? OBSERVED_WRITE_TOOLS : []);
   if (extra.length) return loadFailureGate(stopGate(EXIT.STOPPED, `init lists tools outside this turn's set: ${extra.join(", ")}`));
   if (tools.includes("Skill") && !(listed ?? []).includes("Skill")) return loadFailureGate(stopGate(EXIT.STOPPED, "init does not list Skill, which this turn needs"));
   return null;
@@ -141,7 +141,8 @@ export const messageLabel = (m) => [m?.type, m?.subtype].filter(Boolean).map((v)
 // A system message that is not init, ahead of init, is passed over: stopOn never sees it and it stays
 // out of `messages`, because collect() reads permission_denied and hook_response messages from there
 // and a message ahead of the load check accepts no output. Row forms pass `onMessage`, so it reaches
-// the evidence and `order`. Init forms pass none, and it is recorded nowhere.
+// the evidence and `order`. Init forms pass none, and it is recorded nowhere. A `hookEvents` row reads
+// its hook messages, these included, from what `onMessage` saw (live.mjs), so it is never a load stop.
 export function startPump(q, { onMessage, stopOn = () => false } = {}) {
   const initSeen = deferred();
   const state = { messages: [], init: null, inits: [], error: null, ended: null, finished: false, initSeen: initSeen.promise, order: [], draining: false, drained: null };

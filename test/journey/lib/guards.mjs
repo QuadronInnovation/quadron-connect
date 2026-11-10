@@ -230,6 +230,18 @@ export function assertAutoMemory(options, autoMemory, projectDirName) {
   }
 }
 
+// The per-row check on a session's write rules, beside assertSessionOptions, which refuses a bare write
+// tool on any row. A path rule for a write tool in `allowedTools` must be exactly `expected`: the one rule
+// a `hookWriteTarget` row's writing turn carries (hookWriteRule in rows.mjs). Every other session carries none.
+const WRITE_RULE_RE = /^(Write|Edit|MultiEdit|NotebookEdit)\(/;
+export function assertWriteRules(options, expected = null) {
+  const rules = (Array.isArray(options?.allowedTools) ? options.allowedTools : []).filter((t) => typeof t === "string" && WRITE_RULE_RE.test(t));
+  const want = expected ? [expected] : [];
+  if (rules.length !== want.length || rules.some((r, i) => r !== want[i])) {
+    throw new Refusal("session options refused: allowedTools carries a write rule this turn does not name; nothing started");
+  }
+}
+
 // -------------------------------------------------------------- web and browser tool restrictions
 
 export const REQUIRED_DENY = ["WebFetch", "WebSearch", "Bash(*playwright*)"];
@@ -245,9 +257,11 @@ export const SDK_PACKAGE_DENY = ["Read(//**/node_modules/@anthropic-ai/**)", "Ed
 // Monitor, WebFetch, WebSearch, RemoteTrigger, Workflow. The fixed `tools` list and the load check
 // on init cover the rest of that table.
 export const DISALLOWED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Monitor", "RemoteTrigger", "Workflow", "WebFetch", "WebSearch", ...SUBAGENT_TOOLS, ...SDK_PACKAGE_DENY];
-// The only disallowed names a row may show, and only a row with `observeWrites` (rows.mjs): they leave
-// `disallowedTools` and join `tools`, never `allowedTools`, which sessionOptionFault refuses. Under dontAsk
-// with no allow rule each call is denied, so nothing is written and the attempt shows in the stream.
+// The only disallowed names a row may show, and only a row with `observeWrites` or `hookWriteTarget`
+// (showsWrites in rows.mjs): they leave `disallowedTools` and join `tools`, never `allowedTools` by name,
+// which sessionOptionFault refuses. Under dontAsk with no allow rule each call is denied, so nothing is
+// written and the attempt shows in the stream. The one path rule a `hookWriteTarget` row approves is
+// held to its file by assertWriteRules.
 export const OBSERVED_WRITE_TOOLS = ["Write", "Edit"];
 export const LIFTABLE = ["settings_deny", "init_scan", "tool_use_scan"]; // never "library"
 export const OVERRIDE_MAX_MINUTES = 240;

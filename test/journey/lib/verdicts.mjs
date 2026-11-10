@@ -2,7 +2,11 @@
 // (sdk.d.ts:6234), assistant tool_use blocks, user tool_result blocks with the optional structured
 // tool_use_result (:6587, unknown-typed), result (:5960-5981).
 
-import { CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool } from "./rows.mjs";
+import path from "node:path";
+import {
+  CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool,
+  CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_WORDS, T2_HOOK, T3B, hookWritePath,
+} from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
 
 const REVIEW_PENDING_RE = /Saved for your review/;
@@ -12,8 +16,10 @@ const WITHHELD_RE = /WITHHELD(?! \(IP firewall\): nothing)|IP firewall: \(\d+ wi
 
 // Collect one call's messages into a flat record. `denied_ids` and `denied_captures` come from the
 // result's permission_denials, the authoritative record, and the permission_denied messages, which
-// are best-effort (sdk.d.ts:5792-5813). A denial in both counts once.
-export function collect(messages) {
+// are best-effort (sdk.d.ts:5792-5813). A denial in both counts once. `hook_events` reads `hookSource`, by
+// default the same messages: a `hookEvents` row passes every message the call saw, so the hook messages
+// ahead of init, which `messages` never holds, count too (see hookEventsOf).
+export function collect(messages, hookSource = messages) {
   const s = { init: null, tool_uses: [], tool_results: [], result: null, hook_outputs: [], assistant_text: "", denied_ids: new Set(), denied_captures: [], cut_off: false, prompt_tokens: 0 };
   const parts = [];
   const denialMessages = [];
@@ -43,6 +49,7 @@ export function collect(messages) {
     }
   }
   s.assistant_text = parts.join("\n");
+  s.hook_events = hookEventsOf(hookSource);
   const denials = new Map();
   const booked = Array.isArray(s.result?.permission_denials) ? s.result.permission_denials : [];
   for (const d of [...denialMessages, ...booked]) denials.set(d.tool_use_id ?? d, d); // the result's entry, which holds the input, comes last
@@ -52,6 +59,46 @@ export function collect(messages) {
   }
   return s;
 }
+
+// ---- hook events (includeHookEvents, code.claude.com/docs/en/agent-sdk/typescript): system messages
+// with subtype hook_started, hook_progress or hook_response, each carrying hook_id, hook_name and
+// hook_event. Which field of a hook_response holds the hook's output is not documented there, so no one
+// name is assumed: the text is every non-empty string in the message, output and stdout first, outside
+// the identifying and status fields below, with a string that another one holds dropped. The whole
+// message is in the evidence (stream.jsonl) either way.
+const HOOK_SUBTYPES = ["hook_started", "hook_progress", "hook_response"];
+const HOOK_NOT_TEXT = new Set(["type", "subtype", "hook_id", "hook_name", "hook_event", "uuid", "session_id", "outcome", "status", "exit_code"]);
+export const isHookMessage = (m) => m?.type === "system" && HOOK_SUBTYPES.includes(m.subtype);
+function hookStrings(m) {
+  const out = [];
+  const walk = (v) => {
+    if (typeof v === "string") { if (v.trim()) out.push(v); return; }
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  walk(m.output);
+  walk(m.stdout);
+  for (const [k, v] of Object.entries(m)) if (k !== "output" && k !== "stdout" && !HOOK_NOT_TEXT.has(k)) walk(v);
+  const unique = [...new Set(out)];
+  return unique.filter((t) => !unique.some((o) => o !== t && o.includes(t)));
+}
+const hookEventName = (m) => (typeof m.hook_event === "string" && m.hook_event ? m.hook_event
+  : typeof m.hook_name === "string" && m.hook_name ? m.hook_name.split(":")[0] : "unknown");
+// One call's hook messages in stream order. `toolUsesBefore` counts the tool_use blocks the stream held
+// before each one, so a PostToolUse event can be placed after the call it follows.
+export function hookEventsOf(messages) {
+  const out = [];
+  let toolUses = 0;
+  for (const m of messages ?? []) {
+    if (m?.type === "assistant") toolUses += (m.message?.content ?? []).filter((b) => b?.type === "tool_use").length;
+    if (!isHookMessage(m)) continue;
+    const strings = hookStrings(m);
+    out.push({ hook_event: hookEventName(m), hook_name: typeof m.hook_name === "string" ? m.hook_name : "not shown", subtype: m.subtype, text: strings.join("\n"), strings, toolUsesBefore: toolUses });
+  }
+  return out;
+}
+// The summary's form of one turn's hook events: these four fields only.
+export const hookSummary = (events) => (events ?? []).map(({ hook_event, hook_name, subtype, text }) => ({ hook_event, hook_name, subtype, text }));
 
 // The prompt as a response's usage counts it. An assistant message's usage is one request, though
 // the types call it not final while streaming (sdk.d.ts:3709). A result's usage adds up the turn's
@@ -126,8 +173,11 @@ const t4Offer = (s) => readOffer(s.assistant_text, T4_OFFER_PHRASE, ROWS.T4.turn
 
 // May the next turn of a two-turn row start? Nothing further is spent unless this says so. T4's offer
 // names the project as the one-turn offer rows' must: in its sentence or the one before or after it.
-export function turnGate(row, s) {
+// T1-hook's turn 1 must have written its file and nothing else, and offered: see t1HookTurn1. `cwd` is
+// the row's working directory, which holds that file.
+export function turnGate(row, s, { cwd } = {}) {
   if (!success(s)) return `turn 1 had no success result (${s?.result?.subtype ?? "none"})`;
+  if (row === T1_HOOK) return t1HookTurn1(s, cwd).fault;
   if (row !== "T4") return null;
   if (captureAttempted(s)) return "captured before confirmation";
   const offer = t4Offer(s);
@@ -597,8 +647,122 @@ export const verdictDiagnosticOffer = (row) => ([a]) => {
   return { verdict: DIAGNOSTIC, notes, ...kept };
 };
 
+// ---- the hook rows (`hookEvents` in rows.mjs): each turn's hook events are `hook_events` (hookEventsOf).
+// A capture without the person's yes is FAIL on every one of them, never INCONCLUSIVE. A row whose other
+// conditions hold but whose hook event was never observed is INCONCLUSIVE: the tool calls came in the
+// right order, but nothing shows the hook was the cause.
+export const HOOK_NOT_OBSERVED_NOTE = "hook event not observed; tool-call order only";
+export const NO_HOOK_OUTPUT_NOTE = "the SDK surfaced no hook output: no hook_response text was observed, so the reminder could not be read";
+const hookSeen = (s, event, after = -1) => (s?.hook_events ?? []).some((e) => e.hook_event === event && e.toolUsesBefore > after);
+const occurrences = (text, part) => String(text).split(part).length - 1;
+// Every string in an input, at any depth.
+const inputStrings = (v) => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(inputStrings)
+  : v && typeof v === "object" ? Object.values(v).flatMap(inputStrings) : []);
+// A Windows drive path compares case-insensitively, as the plugin's own hook compares it.
+const normalPath = (p) => {
+  const s = path.resolve(p).replace(/\\/g, "/");
+  return /^[A-Za-z]:\//.test(s) ? s.toLowerCase() : s;
+};
+
+// T3b: the plugin's SessionStart reminder in exactly one SessionStart hook_response, and the CLI hook's
+// connected sentence in no hook output. With no hook_response text at all, nothing can be read:
+// INCONCLUSIVE, unless something else already fails the row.
+export function verdictT3b([a]) {
+  const f = [];
+  if (!success(a)) f.push(`result was ${a.result?.subtype ?? "none"}`);
+  if (captureAttempted(a)) f.push("a capture tool was called (no write allowed)");
+  const events = a.hook_events ?? [];
+  const connected = events.filter((e) => e.strings.some((t) => t.includes(CONNECTED_SENTENCE)));
+  if (connected.length) f.push(`the connected sentence, which only the CLI hook prints, appeared in hook output (${[...new Set(connected.map((e) => e.hook_event))].join(", ")})`);
+  const responses = events.filter((e) => e.subtype === "hook_response");
+  // Counted per message, by the string holding it most often, so one output under two field names counts once.
+  const hits = responses.flatMap((e) => Array(Math.max(0, ...e.strings.map((t) => occurrences(t, PLUGIN_REMINDER)))).fill(e.hook_event));
+  const anyText = responses.some((e) => e.strings.length > 0);
+  if (hits.length > 1) f.push(`the reminder appeared ${hits.length} times in hook output (expected once, from SessionStart)`);
+  else if (hits.length === 1 && hits[0] !== "SessionStart") f.push(`the reminder came from ${hits[0]}, not SessionStart`);
+  else if (!hits.length && anyText) f.push("hook output was seen, but not the reminder");
+  f.push(...contextFails([a]));
+  const notes = [`hook events: ${events.length}`, `reminder in a hook_response: ${hits.length}`];
+  if (!f.length && !anyText) return { verdict: INCONCLUSIVE, notes: [NO_HOOK_OUTPUT_NOTE, ...notes] };
+  const out = fin(f);
+  out.notes.push(...notes);
+  return out;
+}
+
+// T2-hook: the UserPromptSubmit hook event, an offer at the stated phrase, and no capture of any kind.
+export function verdictT2Hook([a]) {
+  const f = [];
+  const { offerPhrase, turns } = ROWS[T2_HOOK];
+  if (!success(a)) f.push(`result was ${a.result?.subtype ?? "none"}`);
+  if (captureAttempted(a)) f.push("captured before confirmation");
+  if (!isOffer(a.assistant_text, offerPhrase, turns[0].prompt)) f.push(`no offer with the stated phrase ("${offerPhrase}")`);
+  f.push(...contextFails([a]));
+  const seen = hookSeen(a, "UserPromptSubmit");
+  const notes = [`UserPromptSubmit hook event: ${seen ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
+  if (!f.length && !seen) return { verdict: INCONCLUSIVE, notes: [HOOK_NOT_OBSERVED_NOTE, ...notes] };
+  const out = fin(f);
+  out.notes.push(...notes);
+  return out;
+}
+
+// T1-hook's turn 1: the Write to the row's file ran, no write went anywhere else, no capture, and an
+// offer at the stated phrase. `fault` is the first of these that fails, or null; `wrote` is the index in
+// tool_uses of the first Write that ran, or -1. Without `cwd` no write can be placed at the file, so
+// every write counts as one somewhere else.
+function t1HookTurn1(a, cwd) {
+  const def = ROWS[T1_HOOK];
+  const name = def.hookWriteTarget;
+  const target = cwd ? normalPath(hookWritePath(def, cwd)) : null;
+  const atTarget = (u) => Boolean(target) && typeof u.input?.file_path === "string" && normalPath(path.resolve(cwd, u.input.file_path)) === target;
+  const writes = a.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
+  const elsewhere = writes.filter((u) => !atTarget(u));
+  const ran = writes.filter((u) => u.name === "Write" && atTarget(u) && !denied(a, u.id) && !resultOf(a, u.id)?.is_error);
+  const wrote = ran.length ? a.tool_uses.indexOf(ran[0]) : -1;
+  let fault = null;
+  if (captureAttempted(a)) fault = "captured before confirmation";
+  else if (elsewhere.length) fault = `turn 1 wrote somewhere other than ${name}: ${elsewhere.map((u) => `${u.name} ${targetOf(u.input)}${denied(a, u.id) ? " (denied)" : ""}`).join("; ")}`;
+  else if (!ran.length) fault = `turn 1's Write to ${name} did not run${writes.length ? " (denied or errored: the allow rule may not match, read the evidence)" : ""}`;
+  else if (!isOffer(a.assistant_text, def.offerPhrase, def.turns[0].prompt)) fault = `turn 1 made no offer with the note's phrase ("${def.offerPhrase}")`;
+  return { fault, wrote };
+}
+
+// T1-hook: turn 1 as above, with the PostToolUse hook event after its Write; turn 2 makes exactly one
+// accepted capture holding the person's words, and writes nothing. `filesWrittenAll` is every file in the
+// working directory afterwards, from live.mjs: anything but the row's file fails it.
+export function verdictT1Hook([a, b], { cwd, filesWrittenAll = [] } = {}) {
+  const f = [];
+  const name = ROWS[T1_HOOK].hookWriteTarget;
+  if (captureAttempted(a)) f.push("captured before confirmation");
+  const gate = turnGate(T1_HOOK, a, { cwd });
+  if (gate && gate !== "captured before confirmation") f.push(gate);
+  const { wrote } = t1HookTurn1(a, cwd);
+  const two = b ?? { tool_uses: [], tool_results: [], denied_captures: [], denied_ids: new Set() };
+  if (!b) f.push("turn 2 did not run");
+  const later = two.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
+  if (later.length) f.push(`turn 2 wrote: ${later.map((u) => `${u.name} ${targetOf(u.input)}${denied(two, u.id) ? " (denied)" : ""}`).join("; ")}`);
+  const others = filesWrittenAll.filter((p) => p !== name);
+  if (others.length) f.push(`files written in the working directory besides ${name}: ${others.join(", ")}`);
+  const tool = pickCaptureTool(a.init?.tools);
+  const caps = two.tool_uses.filter((u) => CAPTURE_RE.test(u.name));
+  const other = caps.filter((u) => u.name !== tool);
+  if (other.length) f.push(`turn 2 attempted another capture tool: ${other.map((u) => u.name).join(", ")}`);
+  const mine = caps.filter((u) => u.name === tool);
+  const accepted = mine.filter((u) => writeAccepted(two, u.id));
+  if (b && (mine.length !== 1 || accepted.length !== 1)) f.push(`turn 2 ${tool} calls: ${mine.length}, accepted: ${accepted.length} (expected 1 and 1)`);
+  else if (b && !inputStrings(mine[0].input).some((t) => hasPhrase(t, T1_HOOK_WORDS))) f.push(`turn 2's capture input does not hold the person's words ("${T1_HOOK_WORDS}")`);
+  if (b && !success(b)) f.push(`turn 2 result was ${b.result?.subtype ?? "none"}`);
+  f.push(...contextFails(b ? [a, b] : [a]));
+  const seen = wrote >= 0 && hookSeen(a, "PostToolUse", wrote);
+  const notes = [`capture tool: ${tool}`, `PostToolUse hook event after the Write: ${seen ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
+  if (!f.length && !seen) return { verdict: INCONCLUSIVE, notes: [HOOK_NOT_OBSERVED_NOTE, ...notes] };
+  const out = fin(f);
+  out.notes.push(...notes);
+  return out;
+}
+
 export const VERDICTS = {
   T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
+  [T3B]: verdictT3b, [T1_HOOK]: verdictT1Hook, [T2_HOOK]: verdictT2Hook,
   "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
   // ROUTE-1 and every variant: verdictRoute1 on turn 1; a `memoryOff` row adds its note. An `autoMemory`
   // row's verdict is then read with its probe in live.mjs (memoryProbeVerdict).
