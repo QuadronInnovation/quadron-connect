@@ -29,11 +29,22 @@
 // marks a ROUTE-1 variant run with auto memory off, as on every row without `autoMemory`. It changes no
 // session option: it adds the memory-off note to the verdict (VERDICTS in verdicts.mjs) and the dry-run line.
 //
+// `hookEvents`: the session asks for hook lifecycle messages (includeHookEvents), every one of them goes to
+// the evidence, and each turn's are summarised for the verdict (hookEventsOf in verdicts.mjs). The plugin's
+// hooks load with the plugin, so nothing else changes. `hookWriteTarget` (a `hookEvents` row only): one
+// file name in the row's own empty working directory. Write and Edit are shown on every turn, as on an
+// `observeWrites` row, and the turn marked `allowWrite` alone approves one path rule naming that file
+// (hookWriteRule below). Every other write stays denied, and a write anywhere else fails the row.
+//
 // Routing row names: ROUTE-1 is the original row; a variant is ROUTE-1-<WORDING>-<ON|OFF>, where ON has
 // `autoMemory` and OFF has `memoryOff`. ROUTE-1-OFF is ROUTE-1's own prompt with memory off; ROUTE-1-RECORD
 // and ROUTE-1-QUADRON run with memory on only, and ROUTE-1-QUADRON is the control that names Quadron.
 
-import { OBSERVED_WRITE_TOOLS } from "./guards.mjs";
+import path from "node:path";
+import { OBSERVED_WRITE_TOOLS, Refusal, resolveReal } from "./guards.mjs";
+import { BANNER } from "../../../plugins/claude-code/hooks/scripts/session-banner.mjs";
+import { CAPTURE_TEXT } from "../../../plugins/claude-code/hooks/scripts/prompt-trigger.mjs";
+import { contextText } from "../../../plugins/claude-code/hooks/scripts/memory-trigger.mjs";
 
 const q = (t) => `mcp__quadron__${t}`;
 export const CAPTURE_PLACEHOLDER = "<captureTool>";
@@ -67,6 +78,34 @@ const routeOn = (projectDirName, ask) => ({
 // Memory off: one turn. With memory off the seeded nonce cannot be echoed, so there is no probe turn.
 const routeOff = (ask) => ({ connector: true, cwd: "empty", observeWrites: true, memoryOff: true, turns: [routeTurn(ask)] });
 const ROUTE_ASK = "Please save that so it's remembered.";
+
+// The hook rows. Their names in one place, so a rename is one line here.
+export const HOOK_ROW_NAMES = ["T3b", "T1-hook", "T2-hook"];
+const [T3B, T1_HOOK, T2_HOOK] = HOOK_ROW_NAMES;
+export { T3B, T1_HOOK, T2_HOOK };
+// The plugin's SessionStart reminder, from the plugin itself, and the sentence that only the CLI-installed
+// hook prints (cli/hooks/session-start.js). A plugin session must show the first once and never the second.
+export const PLUGIN_REMINDER = BANNER;
+export const CONNECTED_SENTENCE = "Quadron is connected, and this person keeps a record of their own expertise in it.";
+// T2-hook: a stated decision in a capture phrase of the plugin's prompt trigger, with no ask to save.
+export const T2_HOOK_OFFER_PHRASE = "annually";
+const T2_HOOK_PROMPT = "I decided we bill annually only; monthly plans are ruled out.";
+// The prompt trigger's capture steer, from the plugin itself: T2-hook passes only with it in a
+// UserPromptSubmit hook event's recorded text.
+export const T2_HOOK_STEER = CAPTURE_TEXT;
+// T1-hook: the file the one allowed Write goes to, in the row's own working directory. A CLAUDE.md, so the
+// plugin's PostToolUse filter Edit(**/CLAUDE.md) matches it.
+const HOOK_WRITE_TARGET = "CLAUDE.md";
+export const T1_HOOK_OFFER_PHRASE = "exact command";
+// The person's words, which turn 2's capture input must hold.
+export const T1_HOOK_WORDS = "exact command that was run";
+const T1_HOOK_DECISION = "My standard: every release note names the exact command that was run.";
+const T1_HOOK_YES = "Yes, keep it in Quadron: every release note names the exact command that was run.";
+// The memory trigger's steer for an instructions file, from the plugin itself: the part ahead of the quoted
+// excerpt, which changes with what was written ("Quadron: you just updated their instructions file:").
+const EXCERPT_PROBE = "\u0000";
+const T1_STEER_FULL = contextText("instructions", EXCERPT_PROBE);
+export const T1_HOOK_STEER = T1_STEER_FULL.slice(0, T1_STEER_FULL.indexOf(EXCERPT_PROBE)).replace(/["\s]+$/, "");
 
 export const ROWS = {
   T2: {
@@ -191,6 +230,51 @@ export const ROWS = {
   "ROUTE-1-REMEMBER-OFF": routeOff("Remember that."),
   "ROUTE-1-RECORD": routeOn("route1-record", "Save that to my record."),
   "ROUTE-1-QUADRON": routeOn("route1-quadron", "Save that to Quadron."),
+  // The hook rows: the plugin's hooks observed through the SDK's hook events (`hookEvents`).
+  // T3b: the SessionStart reminder appears once, and the CLI hook's connected sentence never does. A
+  // neutral prompt, so nothing else should print.
+  [T3B]: {
+    connector: true,
+    cwd: "empty",
+    hookEvents: true,
+    turns: [{ maxTurns: 3, tools: ["Skill", "ToolSearch"], prompt: "Reply with the single word ready." }],
+  },
+  // T1-hook: turn 1 writes the person's decision to a CLAUDE.md, which fires the PostToolUse hook, and the
+  // model offers once; turn 2 is the person's yes, so exactly one capture holds their words. Turn 2
+  // resumes turn 1, as on T4.
+  [T1_HOOK]: {
+    connector: true,
+    cwd: "empty",
+    hookEvents: true,
+    hookWriteTarget: HOOK_WRITE_TARGET,
+    offerPhrase: T1_HOOK_OFFER_PHRASE,
+    turns: [
+      {
+        maxTurns: 6,
+        allowWrite: true,
+        tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+        prompt: `Use the Write tool to put a short scratch note in ${HOOK_WRITE_TARGET} in the current folder. Its text is my own decision, in my words: "${T1_HOOK_DECISION}"`,
+      },
+      {
+        maxTurns: 5,
+        tools: ["Skill", "ToolSearch", CAPTURE_PLACEHOLDER], // resolved from the first turn's init tool list
+        prompt: T1_HOOK_YES,
+      },
+    ],
+  },
+  // T2-hook: a decision in a capture phrase fires the UserPromptSubmit hook; the model offers and does not
+  // capture. The capture tool is visible and dontAsk denies it, as on the T4O rows.
+  [T2_HOOK]: {
+    connector: true,
+    cwd: "empty",
+    hookEvents: true,
+    offerPhrase: T2_HOOK_OFFER_PHRASE,
+    turns: [{
+      maxTurns: 5,
+      tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+      prompt: T2_HOOK_PROMPT,
+    }],
+  },
 };
 
 // The seeded line of an `autoMemory` row's MEMORY.md: neutral, with no decision, judgment or note
@@ -206,14 +290,54 @@ export const AUTO_MEMORY_ROW_NAMES = ROW_NAMES.filter((r) => ROWS[r].autoMemory 
 // Every routing row: ROUTE-1 and its variants, all read by verdictRoute1.
 export const ROUTE_ROW_NAMES = ROW_NAMES.filter((r) => r === "ROUTE-1" || r.startsWith("ROUTE-1-"));
 
+// Whether a row shows Write and Edit: an `observeWrites` row, or a `hookWriteTarget` row.
+export const showsWrites = (def) => Boolean(def?.observeWrites || def?.hookWriteTarget);
+
 // A turn's `tools` option: the built-in names in its allow-list, plus the tools a row's outside check
-// watches, plus Write and Edit on an `observeWrites` row. Connector names and the capture tool stay in
+// watches, plus Write and Edit on a row that shows them. Connector names and the capture tool stay in
 // `allowedTools` only, and the tools added here never reach it. A `probe` turn gets none of them.
 export const turnTools = (def, turn) => (turn.probe ? [] : [...new Set([
   ...turn.tools.filter((t) => t !== CAPTURE_PLACEHOLDER && !t.startsWith("mcp__")),
   ...(def.outsideCheck ?? []),
-  ...(def.observeWrites ? OBSERVED_WRITE_TOOLS : []),
+  ...(showsWrites(def) ? OBSERVED_WRITE_TOOLS : []),
 ])]);
+
+// The one write a row may approve. Edit rules cover every built-in tool that edits a file, Write
+// included (code.claude.com/docs/en/permissions, "Read and Edit"), so the rule is written as Edit; the
+// plugin's own PostToolUse filter has the same form. `//` starts an absolute path, and a Windows path
+// is written in the POSIX form the rules match against (C:\a becomes //c/a). One line changes the tool.
+export const WRITE_RULE_TOOL = "Edit";
+const HOOK_WRITE_TARGET_RE = /^[\w-][\w.-]*$/;
+// Characters a rule would read as a pattern: a path holding one could match more than the one file.
+const RULE_PATTERN_CHARS_RE = /[*?[\]{}!#\\]/;
+export function rulePath(p) {
+  const s = String(p).replace(/\\/g, "/");
+  const win = /^([A-Za-z]):\/(.*)$/.exec(s);
+  return win ? `//${win[1].toLowerCase()}/${win[2]}` : `/${s}`;
+}
+// The absolute path of a `hookWriteTarget` row's file in its working directory, or null on any other row.
+export function hookWritePath(def, cwd) {
+  if (!def?.hookWriteTarget) return null;
+  if (!HOOK_WRITE_TARGET_RE.test(def.hookWriteTarget) || def.cwd !== "empty" || !def.hookEvents) {
+    throw new Refusal("hookWriteTarget must be one plain file name, on a hookEvents row with an empty working directory");
+  }
+  return path.join(cwd, def.hookWriteTarget);
+}
+// The rule for the turn marked `allowWrite` on that row, or null. A path a rule would read as a pattern refuses.
+// With `fs`, the rule is composed from the working directory's real path (resolveReal in guards.mjs, links
+// followed), and a real path that is not the directory the row uses, read in the rule's own form, refuses:
+// the rule would name a path the session does not write to.
+const ruleDir = (p) => rulePath(p).replace(/\/+$/, "");
+export function hookWriteRule(def, turn, cwd, fs = null) {
+  if (!def?.hookWriteTarget || !turn?.allowWrite) return null;
+  const dir = fs ? resolveReal(cwd, fs) : cwd;
+  if (fs && ruleDir(dir) !== ruleDir(path.resolve(cwd))) {
+    throw new Refusal("the row's working directory resolves elsewhere (a symlink or a short name), so its write rule cannot name the file the session writes; the row was not run");
+  }
+  const target = rulePath(hookWritePath(def, dir));
+  if (RULE_PATTERN_CHARS_RE.test(target)) throw new Refusal("the working directory's path holds a character a permission rule reads as a pattern; refusing");
+  return `${WRITE_RULE_TOOL}(${target})`;
+}
 
 export const CAPTURE_TOOLS = [q("future_you_capture"), q("quad_commit")];
 

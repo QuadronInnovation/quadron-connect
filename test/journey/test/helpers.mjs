@@ -139,7 +139,16 @@ const inCwd = (cwd, input) => {
   const target = path.resolve(cwd, input?.file_path ?? input?.path ?? ".");
   return target === cwd || target.startsWith(cwd + path.sep);
 };
-const needsApproval = (b, options) => !options.allowedTools?.includes(b.name) && !(READ_TOOLS.includes(b.name) && inCwd(options.cwd, b.input));
+// An Edit(<path>) rule approves a Write or Edit to exactly that absolute path, in the rules' POSIX form
+// (`//` for the root, a Windows drive as //c/). Written out here, not borrowed from lib.
+const rulePathOf = (p) => {
+  const s = p.replace(/\\/g, "/");
+  const win = /^([A-Za-z]):\/(.*)$/.exec(s);
+  return win ? `//${win[1].toLowerCase()}/${win[2]}` : `/${s}`;
+};
+const ruleAllows = (b, options) => ["Write", "Edit"].includes(b.name) && typeof b.input?.file_path === "string" &&
+  Boolean(options.allowedTools?.includes(`Edit(${rulePathOf(path.resolve(options.cwd ?? ".", b.input.file_path))})`));
+const needsApproval = (b, options) => !options.allowedTools?.includes(b.name) && !(READ_TOOLS.includes(b.name) && inCwd(options.cwd, b.input)) && !ruleAllows(b, options);
 // Shapes per sdk.d.ts: SDKPermissionDenial :5792, SDKPermissionDeniedMessage :5801.
 export const denial = (id, tool_name, tool_input = {}) => ({ tool_name, tool_use_id: id, tool_input });
 export const permissionDenied = (id, tool_name) => ({ type: "system", subtype: "permission_denied", tool_name, tool_use_id: id, message: "denied" });
