@@ -1,5 +1,7 @@
 name: validate
 on: [pull_request, push]
+permissions:
+  contents: read
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -13,3 +15,14 @@ jobs:
         run: cd cli && npm test
       - name: Claude Code plugin validate
         run: npx -y @anthropic-ai/claude-code plugin validate ./plugins/claude-code
+  hooks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ matrix.node-version }}" }
+      - name: Plugin hook tests
+        run: node --test plugins/claude-code/hooks/test/memory-trigger.test.mjs plugins/claude-code/hooks/test/prompt-trigger.test.mjs plugins/claude-code/hooks/test/session-banner.test.mjs plugins/claude-code/hooks/test/hooks-json.test.mjs
