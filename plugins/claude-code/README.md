@@ -65,7 +65,7 @@ These hooks supplement the MCP server and the quadron skill; SKILL.md and the se
 
   A capture phrase injects:
   > Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.
-- **PostToolUse** on `Write|Edit`: runs `scripts/memory-trigger.mjs` for auto-memory files in `projects/*/memory/` of whichever config directory is in use (`~/.claude` by default, or `CLAUDE_CONFIG_DIR`), `CLAUDE.md` and `CLAUDE.local.md`. The three `if` path filters are anchored at the filesystem root (`//**/…`), so they match outside the working directory and home. The memory filter is broad; the script keeps only Markdown files whose `projects` directory is the config directory's, judged by `CLAUDE_CONFIG_DIR` and the hook input's `transcript_path` when present. `MEMORY.md`, subagent memory and frontmatter-only edits are skipped. It injects:
+- **PostToolUse** on `Write|Edit`: runs `scripts/memory-trigger.mjs` for auto-memory files in `projects/*/memory/` of whichever config directory is in use (`~/.claude` by default, or `CLAUDE_CONFIG_DIR`), `CLAUDE.md` and `CLAUDE.local.md`. The handler has no `if` path filter: the script starts on every Write or Edit, does all the narrowing by path itself and is silent on any other file. For memory it keeps only Markdown files whose `projects` directory is the config directory's, judged by `CLAUDE_CONFIG_DIR` and the hook input's `transcript_path` when present. `MEMORY.md`, subagent memory and frontmatter-only edits are skipped. It injects:
   > Quadron: you just saved a memory: "<excerpt>". If it records the person's own decision, standard or preference, offer once in one line to keep it in their Quadron record, quoting their words; call future_you_capture (or quad_commit if that is not listed) only on a yes. If it is your own note, do nothing.
 
   For `CLAUDE.md` and `CLAUDE.local.md` the wording is "you just updated their instructions file" in place of "you just saved a memory". `<excerpt>` stands for the edited text.
@@ -82,12 +82,12 @@ Malformed or empty stdin, or an unexpected event, gives exit 0, no output and on
 
 **Untested until a live run:**
 
-1. Whether the `//**/…` path filters match real memory and instruction-file paths, on Windows and with a relocated config directory.
+1. Whether the PostToolUse hook starts on a Write or Edit now that it has no `if` filter. Versions up to 0.2.1 filtered with `if` path rules (`Edit(//**/CLAUDE.md)` and two more); in a run on Windows on 2026-11-10 no PostToolUse hook started for a Write of `CLAUDE.md` at an absolute path, though the script matched the same input when run by hand. An `if` filter can return once a form is shown to work on Windows.
 2. Whether `--plugin-dir` loads plugin hooks.
 3. Whether the model acts on the injected text (offers, then calls only on a yes).
-4. Memory written to a custom `autoMemoryDirectory` is still not covered: it sits outside the config directory's `projects/*/memory/`, which is all the filter and script accept.
+4. Memory written to a custom `autoMemoryDirectory` is still not covered: it sits outside the config directory's `projects/*/memory/`, which is all the script accepts.
    The `CLAUDE_CONFIG_DIR` check compares text, so a config directory reached through a symlink, or one differing only in letter case on a case-insensitive POSIX filesystem, is not matched.
-5. That `if` anchors a relative pattern at the working directory, and `//` at the filesystem root, is read from the docs' statement that `if` "uses permission rule syntax", not from a run.
+5. Why the `if` filters did not match is not known. Two candidates: an `Edit(…)` rule in `if` may not cover the Write tool, or the `//**/…` form may not match a Windows path.
 
 claude.ai runs no hooks; there the server-side tool descriptions govern.
 
