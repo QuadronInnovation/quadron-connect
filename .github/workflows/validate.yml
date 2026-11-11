@@ -26,3 +26,16 @@ jobs:
         with: { node-version: "${{ matrix.node-version }}" }
       - name: Plugin hook tests
         run: node --test plugins/claude-code/hooks/test/memory-trigger.test.mjs plugins/claude-code/hooks/test/prompt-trigger.test.mjs plugins/claude-code/hooks/test/session-banner.test.mjs plugins/claude-code/hooks/test/hooks-json.test.mjs
+  journey:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ matrix.node-version }}" }
+      - name: Install the pinned SDK for the journey suite
+        run: npm ci --ignore-scripts --prefix test/journey
+      - name: Journey unit suite
+        run: cd test/journey && node --test test/*.test.mjs
