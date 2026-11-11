@@ -38,6 +38,12 @@ test('capture phrases accept a curly apostrophe', () => {
   assert.equal(context(decide(ev('We’ll go with Postgres.'))), CAPTURE_TEXT);
 });
 
+test('the capture line keeps offer-then-yes and treats an explicit save request as the yes', () => {
+  assert.equal(CAPTURE_TEXT,
+    'Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes. An explicit request in this conversation to save or keep that specific thing is the yes: save it with no separate offer.');
+  assert.equal(context(decide(ev('Save this to Quadron: we ship on Fridays only.'))), CAPTURE_TEXT);
+});
+
 test('capture phrases need word boundaries', () => {
   nothing(decide(ev('Is denote that a word? Ianever mind.')));
   nothing(decide(ev('The keep thistle grows here.')));
