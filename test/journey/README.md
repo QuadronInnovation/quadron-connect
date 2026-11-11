@@ -28,3 +28,10 @@ Live results (one attempt each, plugin loaded from its directory, staging connec
 - **T2-hook**: PASS 2026-11-10 at 7c3aa12 (plugin 0.2.1) and at 0182d3a (plugin 0.2.2).
 - **T1-hook**: INCONCLUSIVE 2026-11-10 at 7c3aa12 (plugin 0.2.1, `if` path filters on the handlers): the Write ran, no PostToolUse event was recorded. PASS 2026-11-10 at 0182d3a (plugin 0.2.2, filters removed).
 - **T1-memory-hook**: PASS 2026-11-11 at d539725 (plugin 0.2.2, Claude Code 2.1.316), with auto memory off and the Write asked for by the prompt.
+
+## Permission guard (PERM-1)
+
+Every session runs in `dontAsk` mode, and the harness checks that at the one place a query starts (`sessionOptionFault` in `lib/guards.mjs`). `test/perm1-guard.test.mjs` and the session guard tests in `test/auth-and-guards.test.mjs` cover it. The SDK docs describe the modes in [Agent loop, permission mode](https://code.claude.com/docs/en/agent-sdk/agent-loop#permission-mode) and [Permissions, permission modes](https://code.claude.com/docs/en/agent-sdk/permissions#permission-modes).
+
+- What the suite shows: every session is `dontAsk` with no `canUseTool` and no bypass flag; a capture the turn did not allow is a recorded denial, never a prompt; and the five other modes (`default`, `bypassPermissions`, `acceptEdits`, `plan`, `auto`) are refused before any query.
+- What it cannot show: what the SDK itself does in `default` or `bypassPermissions` mode, or whether a person would see a prompt. No session runs in those modes, and the fake client has no callback. What the docs say about those modes is quoted in the test file's header, not measured.
