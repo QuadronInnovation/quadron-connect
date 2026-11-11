@@ -1,9 +1,9 @@
 // Direct verdict tests, on the records collect() builds from messages shaped per the types.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OFFER_HEURISTIC_NOTE, STATUS_WINDOW_CHARS, T6_STATUS_NOTE, collect, isOffer, judgmentIdFrom, reportsFailedWrite, routingOf, savedWordingFrom, signedClaimField, skillLabel, turnGate, verdictIssue2, verdictT2, verdictT4, verdictT5, verdictT6 } from "../lib/verdicts.mjs";
+import { OFFER_HEURISTIC_NOTE, STATUS_WINDOW_CHARS, T6_STATUS_NOTE, captureList, collect, isOffer, judgmentIdFrom, reportsFailedWrite, routingOf, savedWordingFrom, signedClaimField, skillLabel, turnGate, verdictIssue2, verdictT2, verdictT4, verdictT5, verdictT6 } from "../lib/verdicts.mjs";
 import { Redactor } from "../lib/redact.mjs";
-import { CAPTURE, OFFER, READ, SKILL, assistantText, init, result, toolResult, toolUse } from "./helpers.mjs";
+import { CAPTURE, OFFER, READ, SKILL, assistantText, denial, init, result, toolResult, toolUse } from "./helpers.mjs";
 
 const rec = (...msgs) => collect(msgs);
 const denied = (s, name = CAPTURE) => { s.denied_captures = [{ name, input: {} }]; return s; };
@@ -695,4 +695,34 @@ test("a failed write is read at the reply's top level, and prose that only menti
   assert.equal(reportsFailedWrite(undefined), false);
   const blocks = rec(toolUse("u", CAPTURE, {}), toolResult("u", [{ type: "text", text: JSON.stringify({ ok: false }) }, { type: "text", text: "Try again later." }])).tool_results[0];
   assert.equal(reportsFailedWrite(blocks), false);
+});
+
+// captureList on collect()-built streams. `captureAttempts` in a summary is every stream's denied_captures.
+const DENIED_TEXT = `Permission to use ${CAPTURE} has been denied.`;
+const attempts = (streams) => streams.flatMap((s) => s.denied_captures);
+
+test("captures. an accepted call whose result is an error that is no denial is listed as error, and is no capture attempt", () => {
+  const streams = [rec(init(), toolUse("c", CAPTURE, {}), toolResult("c", "The server returned 500.", true), ok("It did not save."))];
+  assert.deepEqual(captureList(streams), [{ turn: 1, name: CAPTURE, outcome: "error" }]);
+  assert.deepEqual(attempts(streams), []);
+});
+
+test("captures. a denial record with no tool_use_id pairs with its same-name call: one entry, denied", () => {
+  const record = { tool_name: CAPTURE, tool_input: {} };
+  const streams = [rec(init(), toolUse("c", CAPTURE, {}), toolResult("c", DENIED_TEXT, true), result(0.1, { result: "ok", permission_denials: [record] }))];
+  assert.deepEqual(captureList(streams), [{ turn: 1, name: CAPTURE, outcome: "denied" }]);
+  assert.equal(attempts(streams).length, 1);
+});
+
+test("captures. two same-name calls in one turn, one denied by id and one accepted, are listed in call order", () => {
+  const deniedCall = [toolUse("a", CAPTURE, {})];
+  const acceptedCall = [toolUse("b", CAPTURE, {}), toolResult("b", "Saved for your review")];
+  for (const [label, calls, outcomes] of [
+    ["denied first", [...deniedCall, ...acceptedCall], ["denied", "accepted"]],
+    ["accepted first", [...acceptedCall, ...deniedCall], ["accepted", "denied"]],
+  ]) {
+    const streams = [rec(init(), ...calls, result(0.1, { result: "ok", permission_denials: [denial("a", CAPTURE)] }))];
+    assert.deepEqual(captureList(streams), outcomes.map((outcome) => ({ turn: 1, name: CAPTURE, outcome })), label);
+    assert.equal(attempts(streams).length, 1, label);
+  }
 });

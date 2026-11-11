@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool,
   CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_STEER, T1_HOOK_WORDS, T1_MEMORY_HOOK, T1_MEMORY_HOOK_STEER, T1_MEMORY_HOOK_WORDS,
-  T2_HOOK, T2_HOOK_STEER, T3B, hookWritePath, writesMemory,
+  T2_HOOK, T2_HOOK_STEER, T2_HOOK_STEER_CORE, T3B, hookWritePath, writesMemory,
   T1_AUTO_MEMORY_HOOK, T1_AUTO_MEMORY_HOOK_WORDS, autoMemoryWriteDir, ownMemoryChangePrefix,
 } from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
@@ -124,16 +124,17 @@ const fin = (fails, extra = {}) => ({ verdict: fails.length ? "FAIL" : "PASS", n
 
 export const captureAttempted = (s) => called(s, CAPTURE_RE) || s.denied_captures.length > 0;
 // Every capture call of a row, one stream per turn, as {turn, name, outcome}: "denied" when the permission
-// layer denied it (its id is in denied_ids, or a denial has no tool_use), "error" for an error result,
-// "accepted" for a result that is no error, and "no_result" when the stream holds no result for the call
-// (the turn ended first), so how it went is not known. A denial with a tool_use is matched to it by name,
-// so it is listed once.
+// layer denied it (`denied`: its id is in denied_ids, or its error result reads as a denial), "error" for
+// any other error result, "accepted" for a result that is no error, and "no_result" when the stream holds
+// no result for the call (the turn ended first), so how it went is not known. Each denied call takes one
+// denial record of its name, so a record that carries no tool_use_id still pairs with its call and the
+// call is listed once; a record left over (a denial with no tool_use) is listed once as "denied".
 export function captureList(streams) {
   return streams.flatMap((s, i) => {
     const turn = i + 1;
     const unmatched = [...s.denied_captures];
     const calls = s.tool_uses.filter((u) => CAPTURE_RE.test(u.name)).map((u) => {
-      if (!s.denied_ids.has(u.id)) {
+      if (!denied(s, u.id)) {
         const r = resultOf(s, u.id);
         return { turn, name: u.name, outcome: !r ? "no_result" : r.is_error ? "error" : "accepted" };
       }
@@ -721,8 +722,8 @@ export function verdictT3b([a]) {
 }
 
 // T2-hook: a UserPromptSubmit hook event whose recorded text holds the prompt trigger's capture steer
-// (T2_HOOK_STEER), an offer at the stated phrase, and no capture of any kind. An event without the steer
-// text is INCONCLUSIVE, never a pass.
+// (its core, T2_HOOK_STEER_CORE, so output recorded before plugin 0.2.3 still reads), an offer at the
+// stated phrase, and no capture of any kind. An event without the steer text is INCONCLUSIVE, never a pass.
 export function verdictT2Hook([a]) {
   const f = [];
   const { offerPhrase, turns } = ROWS[T2_HOOK];
@@ -731,7 +732,7 @@ export function verdictT2Hook([a]) {
   if (!isOffer(a.assistant_text, offerPhrase, turns[0].prompt)) f.push(`no offer with the stated phrase ("${offerPhrase}")`);
   f.push(...contextFails([a]));
   const seen = hookSeen(a, "UserPromptSubmit");
-  const steered = steerSeen(a, T2_HOOK_STEER, { event: "UserPromptSubmit" });
+  const steered = steerSeen(a, T2_HOOK_STEER_CORE, { event: "UserPromptSubmit" });
   const notes = [`UserPromptSubmit hook event: ${seen ? "seen" : "not seen"}`, `UserPromptSubmit steer text: ${steered ? "seen" : "not seen"}`, OFFER_HEURISTIC_NOTE];
   if (!f.length && !seen) return { verdict: INCONCLUSIVE, notes: [HOOK_NOT_OBSERVED_NOTE, ...notes] };
   if (!f.length && !steered) return { verdict: INCONCLUSIVE, notes: [HOOK_STEER_NOT_SEEN_NOTE, ...notes] };
