@@ -22,7 +22,7 @@ import { box, fakeClient, liveEnv, init, result, toolUse, toolResult, assistantT
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", "..");
-const [T3B, T1H, T2H, T1M] = HOOK_ROW_NAMES;
+const [T3B, T1H, T2H, T1M, T1AM] = HOOK_ROW_NAMES;
 const DRY_ENV = { ANTHROPIC_BASE_URL: "http://127.0.0.1:9" };
 
 const run = (b, argv, scripts, over = {}, env = liveEnv()) => {
@@ -60,14 +60,14 @@ const t1 = (a, b, ctx = {}) => VERDICTS[T1H]([a, b], { cwd: CWD, filesWrittenAll
 
 // ---------------------------------------------------------------- the rows themselves
 
-test("hook rows: the three ids, all connector rows in an empty directory with the plugin, hook events on, and nothing else marked", () => {
-  assert.deepEqual(HOOK_ROW_NAMES, ["T3b", "T1-hook", "T2-hook", "T1-memory-hook"]);
+test("hook rows: the five ids, all connector rows in an empty directory with the plugin, hook events on, and nothing else marked", () => {
+  assert.deepEqual(HOOK_ROW_NAMES, ["T3b", "T1-hook", "T2-hook", "T1-memory-hook", "T1-auto-memory-hook"]);
   assert.deepEqual(ROW_NAMES.filter((r) => ROWS[r].hookEvents), HOOK_ROW_NAMES);
   for (const r of HOOK_ROW_NAMES) {
     assert.ok(ROW_NAMES.includes(r), r);
     assert.equal(ROWS[r].connector, true, r);
     assert.equal(ROWS[r].cwd, "empty", r);
-    assert.ok(!ROWS[r].noPlugin && !ROWS[r].noSession && !ROWS[r].autoMemory && !ROWS[r].observeWrites, r);
+    assert.ok(!ROWS[r].noPlugin && !ROWS[r].noSession && (r === T1AM || !ROWS[r].autoMemory) && !ROWS[r].observeWrites, r); // T1-auto-memory-hook is the one with auto memory on
   }
   assert.deepEqual(ROW_NAMES.filter((r) => ROWS[r].hookWriteTarget), [T1H, T1M]);
   assert.equal(ROWS[T1H].hookWriteTarget, "CLAUDE.md");
@@ -340,10 +340,10 @@ test("the write rule: T1-hook's turn 1 alone, one Edit rule naming its one file;
   assert.equal(rulePath("/tmp/x/CLAUDE.md"), "//tmp/x/CLAUDE.md");
   assert.equal(hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], "/tmp/x"), "Edit(//tmp/x/CLAUDE.md)");
   assert.equal(hookWriteRule(ROWS[T1H], ROWS[T1H].turns[1], "/tmp/x"), null);
-  for (const r of ROW_NAMES.filter((n) => n !== T1H && n !== T1M)) for (const t of ROWS[r].turns) assert.equal(hookWriteRule(ROWS[r], t, "/tmp/x"), null, r);
+  for (const r of ROW_NAMES.filter((n) => n !== T1H && n !== T1M && n !== T1AM)) for (const t of ROWS[r].turns) assert.equal(hookWriteRule(ROWS[r], t, "/tmp/x"), null, r);
   assert.throws(() => hookWriteRule(ROWS[T1H], ROWS[T1H].turns[0], "/tmp/a*b"), /reads as a pattern/);
   assert.throws(() => hookWriteRule({ ...ROWS[T1H], hookWriteTarget: "../CLAUDE.md" }, ROWS[T1H].turns[0], "/tmp/x"), /one plain file name/);
-  assert.deepEqual(ROW_NAMES.filter((r) => showsWrites(ROWS[r])), [...ROW_NAMES.filter((r) => ROWS[r].observeWrites), T1H, T1M]);
+  assert.deepEqual(ROW_NAMES.filter((r) => showsWrites(ROWS[r])), [...ROW_NAMES.filter((r) => ROWS[r].observeWrites), T1H, T1M, T1AM]);
   assert.deepEqual(turnTools(ROWS[T1H], ROWS[T1H].turns[0]), ["Skill", "ToolSearch", "Write", "Edit"]);
   // The guard: exactly the expected rule, or none.
   const o = (allowedTools) => ({ allowedTools });
