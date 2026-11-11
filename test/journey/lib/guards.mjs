@@ -103,12 +103,16 @@ export const AUTO_MEMORY_ON = "0";
 export const PROJECT_DIR_VAR = "CLAUDE_CODE_PROJECT_DIR_NAME";
 export const PROJECT_DIR_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const PROJECT_DIR_MIN_VERSION = "2.1.234";
-// `projectDirName`: an `autoMemory` row only.
-export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMemory = false, projectDirName }) {
+// `projectDirName`: an `autoMemory` row, or a row that writes to the memory directory with auto memory
+// off (`memoryDir`, `hookWriteDir: "memory"` in rows.mjs). No other row names one.
+export function buildChildEnv(env, { configDir, homeDir, maxOutputTokens, autoMemory = false, memoryDir = false, projectDirName }) {
   if (!homeDir) throw new Refusal("no isolated home directory for the child");
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0) throw new Refusal("no output token limit for the child");
-  if (projectDirName !== undefined && (autoMemory !== true || !PROJECT_DIR_NAME_RE.test(projectDirName))) {
+  if (projectDirName !== undefined && ((autoMemory !== true && memoryDir !== true) || !PROJECT_DIR_NAME_RE.test(projectDirName))) {
     throw new Refusal("a project directory name needs an autoMemory row and 1-64 letters, digits, hyphens or underscores");
+  }
+  if (memoryDir === true && (autoMemory === true || projectDirName === undefined || !configDir)) {
+    throw new Refusal("a memory-directory row needs a project directory name and a config directory, with auto memory off");
   }
   const out = {};
   for (const k of Object.keys(ENV_ALLOWLIST)) {
@@ -213,8 +217,9 @@ export function assertSessionOptions(options) {
 // options alone and cannot know the row). Off: an env, when given, must set it to 1. On, for an
 // `autoMemory` row only: an env must be given and set it to AUTO_MEMORY_ON. A session with no env is
 // the guard-only check before any form starts, which sends no prompt.
-// `projectDirName`: the name an `autoMemory` row's env must carry in PROJECT_DIR_VAR; every other
-// session's env must carry none.
+// `projectDirName`: the name an `autoMemory` row's env must carry in PROJECT_DIR_VAR. A row that writes
+// to the memory directory with auto memory off passes its name too, and its env must carry exactly that;
+// every other session's env must carry none.
 export function assertAutoMemory(options, autoMemory, projectDirName) {
   const env = options?.env;
   const hasEnv = Boolean(env) && typeof env === "object";
@@ -226,7 +231,8 @@ export function assertAutoMemory(options, autoMemory, projectDirName) {
     if (dirName !== projectDirName) throw refuse(`${PROJECT_DIR_VAR} must be the row's project directory name`);
   } else if (env !== undefined && env !== null) {
     if (value !== "1") throw refuse(`${AUTO_MEMORY_VAR} must be 1 on this row`);
-    if (dirName !== undefined) throw refuse(`${PROJECT_DIR_VAR} is for an autoMemory row only`);
+    if (projectDirName === undefined && dirName !== undefined) throw refuse(`${PROJECT_DIR_VAR} is for an autoMemory row only`);
+    if (projectDirName !== undefined && dirName !== projectDirName) throw refuse(`${PROJECT_DIR_VAR} must be the row's project directory name`);
   }
 }
 

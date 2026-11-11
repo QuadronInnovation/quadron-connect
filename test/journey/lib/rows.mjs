@@ -35,13 +35,17 @@
 // file name in the row's own empty working directory. Write and Edit are shown on every turn, as on an
 // `observeWrites` row, and the turn marked `allowWrite` alone approves one path rule naming that file
 // (hookWriteRule below). Every other write stays denied, and a write anywhere else fails the row.
+// `hookWriteDir: "memory"` (a `hookWriteTarget` row only, with `projectDirName` and never `autoMemory`): the
+// file goes to <config-dir>/projects/<projectDirName>/memory/ in place of the working directory, the child
+// env carries CLAUDE_CODE_PROJECT_DIR_NAME so that is the session's own memory directory, and the harness
+// makes the directory before the row. Auto memory stays off.
 //
 // Routing row names: ROUTE-1 is the original row; a variant is ROUTE-1-<WORDING>-<ON|OFF>, where ON has
 // `autoMemory` and OFF has `memoryOff`. ROUTE-1-OFF is ROUTE-1's own prompt with memory off; ROUTE-1-RECORD
 // and ROUTE-1-QUADRON run with memory on only, and ROUTE-1-QUADRON is the control that names Quadron.
 
 import path from "node:path";
-import { OBSERVED_WRITE_TOOLS, Refusal, resolveReal } from "./guards.mjs";
+import { OBSERVED_WRITE_TOOLS, PROJECT_DIR_NAME_RE, Refusal, resolveReal } from "./guards.mjs";
 import { BANNER } from "../../../plugins/claude-code/hooks/scripts/session-banner.mjs";
 import { CAPTURE_TEXT } from "../../../plugins/claude-code/hooks/scripts/prompt-trigger.mjs";
 import { contextText } from "../../../plugins/claude-code/hooks/scripts/memory-trigger.mjs";
@@ -80,9 +84,9 @@ const routeOff = (ask) => ({ connector: true, cwd: "empty", observeWrites: true,
 const ROUTE_ASK = "Please save that so it's remembered.";
 
 // The hook rows. Their names in one place, so a rename is one line here.
-export const HOOK_ROW_NAMES = ["T3b", "T1-hook", "T2-hook"];
-const [T3B, T1_HOOK, T2_HOOK] = HOOK_ROW_NAMES;
-export { T3B, T1_HOOK, T2_HOOK };
+export const HOOK_ROW_NAMES = ["T3b", "T1-hook", "T2-hook", "T1-memory-hook"];
+const [T3B, T1_HOOK, T2_HOOK, T1_MEMORY_HOOK] = HOOK_ROW_NAMES;
+export { T3B, T1_HOOK, T2_HOOK, T1_MEMORY_HOOK };
 // The plugin's SessionStart reminder, from the plugin itself, and the sentence that only the CLI-installed
 // hook prints (cli/hooks/session-start.js). A plugin session must show the first once and never the second.
 export const PLUGIN_REMINDER = BANNER;
@@ -106,6 +110,21 @@ const T1_HOOK_YES = "Yes, keep it in Quadron: every release note names the exact
 const EXCERPT_PROBE = "\u0000";
 const T1_STEER_FULL = contextText("instructions", EXCERPT_PROBE);
 export const T1_HOOK_STEER = T1_STEER_FULL.slice(0, T1_STEER_FULL.indexOf(EXCERPT_PROBE)).replace(/["\s]+$/, "");
+// T1-memory-hook: the one allowed Write goes to a memory file, <config-dir>/projects/<name>/memory/<file>,
+// which is where that session's auto memory lives once CLAUDE_CODE_PROJECT_DIR_NAME is set beside
+// CLAUDE_CONFIG_DIR (code.claude.com/docs/en/sessions, "Name the project directory yourself", read
+// 2026-11-10). Auto memory itself stays off: the row asks for the Write, so the hook is what is measured.
+export const MEMORY_HOOK_PROJECT_DIR = "t1-memory-hook";
+const MEMORY_HOOK_FILE = "hotfix-standard.md";
+// Where a turn's prompt names the row's file; live.mjs puts the absolute path in (turnPrompt below).
+export const WRITE_PATH_PLACEHOLDER = "<writePath>";
+export const T1_MEMORY_HOOK_OFFER_PHRASE = "rollback note";
+export const T1_MEMORY_HOOK_WORDS = "rollback note before it ships";
+const T1_MEMORY_HOOK_DECISION = "My standard: every hotfix gets a rollback note before it ships.";
+const T1_MEMORY_HOOK_YES = "Yes, keep it in Quadron: every hotfix gets a rollback note before it ships.";
+// The memory trigger's steer for a memory file ("Quadron: you just saved a memory:").
+const T1_MEMORY_STEER_FULL = contextText("memory", EXCERPT_PROBE);
+export const T1_MEMORY_HOOK_STEER = T1_MEMORY_STEER_FULL.slice(0, T1_MEMORY_STEER_FULL.indexOf(EXCERPT_PROBE)).replace(/["\s]+$/, "");
 
 export const ROWS = {
   T2: {
@@ -275,6 +294,31 @@ export const ROWS = {
       prompt: T2_HOOK_PROMPT,
     }],
   },
+  // T1-memory-hook: T1-hook's shape, with the Write going to a memory file under the config directory
+  // (`hookWriteDir`), so the PostToolUse hook's memory steer is what follows it. Stricter than T1-hook:
+  // no PostToolUse event after the Write fails the row.
+  [T1_MEMORY_HOOK]: {
+    connector: true,
+    cwd: "empty",
+    hookEvents: true,
+    hookWriteTarget: MEMORY_HOOK_FILE,
+    hookWriteDir: "memory",
+    projectDirName: MEMORY_HOOK_PROJECT_DIR,
+    offerPhrase: T1_MEMORY_HOOK_OFFER_PHRASE,
+    turns: [
+      {
+        maxTurns: 6,
+        allowWrite: true,
+        tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+        prompt: `Use the Write tool to save a memory file at exactly this path: ${WRITE_PATH_PLACEHOLDER} Its text is my own decision, in my words: "${T1_MEMORY_HOOK_DECISION}"`,
+      },
+      {
+        maxTurns: 5,
+        tools: ["Skill", "ToolSearch", CAPTURE_PLACEHOLDER], // resolved from the first turn's init tool list
+        prompt: T1_MEMORY_HOOK_YES,
+      },
+    ],
+  },
 };
 
 // The seeded line of an `autoMemory` row's MEMORY.md: neutral, with no decision, judgment or note
@@ -315,26 +359,45 @@ export function rulePath(p) {
   const win = /^([A-Za-z]):\/(.*)$/.exec(s);
   return win ? `//${win[1].toLowerCase()}/${win[2]}` : `/${s}`;
 }
-// The absolute path of a `hookWriteTarget` row's file in its working directory, or null on any other row.
-export function hookWritePath(def, cwd) {
+// Whether a row's one file goes to the memory directory under the config directory (`hookWriteDir`).
+export const writesMemory = (def) => def?.hookWriteDir === "memory";
+// The directory a `hookWriteTarget` row writes its file to, or null on any other row: the working directory,
+// or on a `hookWriteDir: "memory"` row <config-dir>/projects/<projectDirName>/memory.
+export function hookWriteDir(def, cwd, configDir = null) {
   if (!def?.hookWriteTarget) return null;
   if (!HOOK_WRITE_TARGET_RE.test(def.hookWriteTarget) || def.cwd !== "empty" || !def.hookEvents) {
     throw new Refusal("hookWriteTarget must be one plain file name, on a hookEvents row with an empty working directory");
   }
-  return path.join(cwd, def.hookWriteTarget);
+  if (def.hookWriteDir === undefined) return cwd;
+  if (!writesMemory(def) || !PROJECT_DIR_NAME_RE.test(def.projectDirName ?? "") || def.autoMemory || !/\.md$/.test(def.hookWriteTarget)) {
+    throw new Refusal("hookWriteDir must be \"memory\", on a row with a project directory name, auto memory off and a .md file");
+  }
+  if (!configDir) throw new Refusal("a memory write needs the config directory; the row was not run");
+  return path.join(configDir, "projects", def.projectDirName, "memory");
+}
+// The absolute path of a `hookWriteTarget` row's file, or null on any other row.
+export function hookWritePath(def, cwd, configDir = null) {
+  const dir = hookWriteDir(def, cwd, configDir);
+  return dir === null ? null : path.join(dir, def.hookWriteTarget);
+}
+// A turn's prompt as sent: the placeholder, where a prompt has one, becomes the row's file path.
+export function turnPrompt(def, turn, cwd, configDir = null) {
+  if (!turn.prompt.includes(WRITE_PATH_PLACEHOLDER)) return turn.prompt;
+  return turn.prompt.split(WRITE_PATH_PLACEHOLDER).join(hookWritePath(def, cwd, configDir));
 }
 // The rule for the turn marked `allowWrite` on that row, or null. A path a rule would read as a pattern refuses.
-// With `fs`, the rule is composed from the working directory's real path (resolveReal in guards.mjs, links
+// With `fs`, the rule is composed from the directory's real path (resolveReal in guards.mjs, links
 // followed), and a real path that is not the directory the row uses, read in the rule's own form, refuses:
 // the rule would name a path the session does not write to.
 const ruleDir = (p) => rulePath(p).replace(/\/+$/, "");
-export function hookWriteRule(def, turn, cwd, fs = null) {
+export function hookWriteRule(def, turn, cwd, fs = null, configDir = null) {
   if (!def?.hookWriteTarget || !turn?.allowWrite) return null;
-  const dir = fs ? resolveReal(cwd, fs) : cwd;
-  if (fs && ruleDir(dir) !== ruleDir(path.resolve(cwd))) {
-    throw new Refusal("the row's working directory resolves elsewhere (a symlink or a short name), so its write rule cannot name the file the session writes; the row was not run");
+  const named = hookWriteDir(def, cwd, configDir);
+  const dir = fs ? resolveReal(named, fs) : named;
+  if (fs && ruleDir(dir) !== ruleDir(path.resolve(named))) {
+    throw new Refusal(`the row's ${writesMemory(def) ? "memory" : "working"} directory resolves elsewhere (a symlink or a short name), so its write rule cannot name the file the session writes; the row was not run`);
   }
-  const target = rulePath(hookWritePath(def, dir));
+  const target = rulePath(path.join(dir, def.hookWriteTarget));
   if (RULE_PATTERN_CHARS_RE.test(target)) throw new Refusal("the working directory's path holds a character a permission rule reads as a pattern; refusing");
   return `${WRITE_RULE_TOOL}(${target})`;
 }
