@@ -34,7 +34,7 @@ export const RECALL_TEXT =
   'Quadron: the person is reaching back to their prior work. Call quad_context with the topic (or quad_recall within a named project) before answering.';
 
 export const CAPTURE_TEXT =
-  'Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.';
+  'Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes. An explicit request in this conversation to save or keep that specific thing is the yes: save it with no separate offer.';
 
 function phraseRegex(phrase, flags = 'i') {
   const body = phrase

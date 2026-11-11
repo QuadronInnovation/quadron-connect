@@ -64,7 +64,7 @@ These hooks supplement the MCP server and the quadron skill; SKILL.md and the se
   > Quadron: the person is reaching back to their prior work. Call quad_context with the topic (or quad_recall within a named project) before answering.
 
   A capture phrase injects:
-  > Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.
+  > Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes. An explicit request in this conversation to save or keep that specific thing is the yes: save it with no separate offer.
 - **PostToolUse** on `Write|Edit`: runs `scripts/memory-trigger.mjs` for auto-memory files in `projects/*/memory/` of whichever config directory is in use (`~/.claude` by default, or `CLAUDE_CONFIG_DIR`), `CLAUDE.md` and `CLAUDE.local.md`. The handler has no `if` path filter: the script starts on every Write or Edit, does all the narrowing by path itself and is silent on any other file. For memory it keeps only Markdown files whose `projects` directory is the config directory's, judged by `CLAUDE_CONFIG_DIR` and the hook input's `transcript_path` when present. `MEMORY.md`, subagent memory and frontmatter-only edits are skipped. It injects:
   > Quadron: you just saved a memory: "<excerpt>". If it records the person's own decision, standard or preference, offer once in one line to keep it in their Quadron record, quoting their words; call future_you_capture (or quad_commit if that is not listed) only on a yes. If it is your own note, do nothing.
 
