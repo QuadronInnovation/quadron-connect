@@ -781,6 +781,23 @@ test("F12. a denied capture counts as a connector call: a pending server with on
   }
 });
 
+test("F12. captures lists every capture call by turn and outcome; captureAttempts keeps the denied ones only", async () => {
+  const b = box();
+  const ok = await run(b, b.argv("T4"), T4_OK());
+  assert.deepEqual(ok.r.summary.captures, [{ turn: 2, name: CAPTURE, outcome: "accepted" }]);
+  assert.deepEqual(ok.r.summary.captureAttempts, []);
+  for (const [label, script] of [
+    ["a denied tool_use", [[init({ session_id: "q" }), result(0.05, { session_id: "q", result: "Summary." })],
+      [init({ session_id: "q" }), toolUse("c", CAPTURE, {}), toolResult("c", "denied", true), result(0.08, { session_id: "q", result: "ok" })]]],
+    ["a denial with no tool_use", noWriteRows.T5([], { permission_denials: [denial("c", CAPTURE)] })],
+  ]) {
+    const c = box();
+    const { r } = await run(c, c.argv("T5"), script);
+    assert.deepEqual(r.summary.captures, [{ turn: 2, name: CAPTURE, outcome: "denied" }], label);
+    assert.deepEqual(r.summary.captureAttempts.map((a) => a.name), [CAPTURE], label);
+  }
+});
+
 test("F12. T4 turn 1 leaves capture off the allow-list; turn 2 is the one turn that lists it, and only the one tool", async () => {
   const b = box();
   const { client } = await run(b, b.argv("T4"), T4_OK());
