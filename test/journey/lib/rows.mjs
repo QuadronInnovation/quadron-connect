@@ -39,6 +39,12 @@
 // file goes to <config-dir>/projects/<projectDirName>/memory/ in place of the working directory, the child
 // env carries CLAUDE_CODE_PROJECT_DIR_NAME so that is the session's own memory directory, and the harness
 // makes the directory before the row. Auto memory stays off.
+// `autoMemoryWrites` (an `autoMemory` and `hookEvents` row only, with `projectDirName`, an empty working directory
+// and no other write flag): Write and Edit are shown as on a `hookWriteTarget` row, and the turn marked
+// `allowWrite` alone approves one directory rule, any .md file directly in the session's own memory directory
+// (<config-dir>/projects/<projectDirName>/memory/*.md, hookWriteRule below). The harness makes that directory,
+// empty, before the snapshot and seeds nothing there, since the row has no probe turn. A change inside it is what
+// the row looks for; a memory or CLAUDE.md change anywhere else fails it, as on the other `autoMemory` rows.
 //
 // Routing row names: ROUTE-1 is the original row; a variant is ROUTE-1-<WORDING>-<ON|OFF>, where ON has
 // `autoMemory` and OFF has `memoryOff`. ROUTE-1-OFF is ROUTE-1's own prompt with memory off; ROUTE-1-RECORD
@@ -84,9 +90,9 @@ const routeOff = (ask) => ({ connector: true, cwd: "empty", observeWrites: true,
 const ROUTE_ASK = "Please save that so it's remembered.";
 
 // The hook rows. Their names in one place, so a rename is one line here.
-export const HOOK_ROW_NAMES = ["T3b", "T1-hook", "T2-hook", "T1-memory-hook"];
-const [T3B, T1_HOOK, T2_HOOK, T1_MEMORY_HOOK] = HOOK_ROW_NAMES;
-export { T3B, T1_HOOK, T2_HOOK, T1_MEMORY_HOOK };
+export const HOOK_ROW_NAMES = ["T3b", "T1-hook", "T2-hook", "T1-memory-hook", "T1-auto-memory-hook"];
+const [T3B, T1_HOOK, T2_HOOK, T1_MEMORY_HOOK, T1_AUTO_MEMORY_HOOK] = HOOK_ROW_NAMES;
+export { T3B, T1_HOOK, T2_HOOK, T1_MEMORY_HOOK, T1_AUTO_MEMORY_HOOK };
 // The plugin's SessionStart reminder, from the plugin itself, and the sentence that only the CLI-installed
 // hook prints (cli/hooks/session-start.js). A plugin session must show the first once and never the second.
 export const PLUGIN_REMINDER = BANNER;
@@ -125,6 +131,15 @@ const T1_MEMORY_HOOK_YES = "Yes, keep it in Quadron: every hotfix gets a rollbac
 // The memory trigger's steer for a memory file ("Quadron: you just saved a memory:").
 const T1_MEMORY_STEER_FULL = contextText("memory", EXCERPT_PROBE);
 export const T1_MEMORY_HOOK_STEER = T1_MEMORY_STEER_FULL.slice(0, T1_MEMORY_STEER_FULL.indexOf(EXCERPT_PROBE)).replace(/["\s]+$/, "");
+// T1-auto-memory-hook: auto memory on, and turn 1 asks for no write. The person states their own standard with
+// a "remember" that names no file, path or tool, so any memory file is Claude Code's own save. The prompt trips
+// neither prompt-trigger list ("Remember for" is not "remember this" or "remember that"), so an offer in turn 1
+// cannot come from the UserPromptSubmit capture reminder. Its own project directory name, as each autoMemory row.
+export const AUTO_MEMORY_HOOK_PROJECT_DIR = "t1-auto-memory-hook";
+export const T1_AUTO_MEMORY_HOOK_OFFER_PHRASE = "down-migration";
+export const T1_AUTO_MEMORY_HOOK_WORDS = "tested down-migration";
+const T1_AUTO_MEMORY_HOOK_PROMPT = "Remember for next time: my standard is that every schema change ships with a tested down-migration.";
+const T1_AUTO_MEMORY_HOOK_YES = "Yes, keep it in Quadron: every schema change ships with a tested down-migration.";
 
 export const ROWS = {
   T2: {
@@ -319,6 +334,31 @@ export const ROWS = {
       },
     ],
   },
+  // T1-auto-memory-hook: T1-memory-hook's shape and caps with auto memory on and no ask to write: whether Claude
+  // Code saves a memory file by itself, through Write or Edit, and whether the PostToolUse hook's memory steer
+  // follows. Turn 1 alone approves the memory directory's one rule (`autoMemoryWrites`); turn 2 is the yes.
+  [T1_AUTO_MEMORY_HOOK]: {
+    connector: true,
+    cwd: "empty",
+    hookEvents: true,
+    autoMemory: true,
+    autoMemoryWrites: true,
+    projectDirName: AUTO_MEMORY_HOOK_PROJECT_DIR,
+    offerPhrase: T1_AUTO_MEMORY_HOOK_OFFER_PHRASE,
+    turns: [
+      {
+        maxTurns: 6,
+        allowWrite: true,
+        tools: ["Skill", "ToolSearch", q("quad_context"), q("quad_search"), q("quad_recall")],
+        prompt: T1_AUTO_MEMORY_HOOK_PROMPT,
+      },
+      {
+        maxTurns: 5,
+        tools: ["Skill", "ToolSearch", CAPTURE_PLACEHOLDER], // resolved from the first turn's init tool list
+        prompt: T1_AUTO_MEMORY_HOOK_YES,
+      },
+    ],
+  },
 };
 
 // The seeded line of an `autoMemory` row's MEMORY.md: neutral, with no decision, judgment or note
@@ -334,8 +374,8 @@ export const AUTO_MEMORY_ROW_NAMES = ROW_NAMES.filter((r) => ROWS[r].autoMemory 
 // Every routing row: ROUTE-1 and its variants, all read by verdictRoute1.
 export const ROUTE_ROW_NAMES = ROW_NAMES.filter((r) => r === "ROUTE-1" || r.startsWith("ROUTE-1-"));
 
-// Whether a row shows Write and Edit: an `observeWrites` row, or a `hookWriteTarget` row.
-export const showsWrites = (def) => Boolean(def?.observeWrites || def?.hookWriteTarget);
+// Whether a row shows Write and Edit: an `observeWrites` row, a `hookWriteTarget` row, or an `autoMemoryWrites` row.
+export const showsWrites = (def) => Boolean(def?.observeWrites || def?.hookWriteTarget || def?.autoMemoryWrites);
 
 // A turn's `tools` option: the built-in names in its allow-list, plus the tools a row's outside check
 // watches, plus Write and Edit on a row that shows them. Connector names and the capture tool stay in
@@ -380,6 +420,24 @@ export function hookWritePath(def, cwd, configDir = null) {
   const dir = hookWriteDir(def, cwd, configDir);
   return dir === null ? null : path.join(dir, def.hookWriteTarget);
 }
+// The session's own memory directory on an `autoMemoryWrites` row, <config-dir>/projects/<projectDirName>/memory,
+// or null on any other row. A row that does not hold to the flag's conditions refuses (see the header).
+export function autoMemoryWriteDir(def, configDir) {
+  if (!def?.autoMemoryWrites) return null;
+  if (def.autoMemory !== true || !def.hookEvents || def.cwd !== "empty" || !PROJECT_DIR_NAME_RE.test(def.projectDirName ?? "") ||
+    def.hookWriteTarget !== undefined || def.hookWriteDir !== undefined || def.observeWrites) {
+    throw new Refusal("autoMemoryWrites needs an autoMemory hookEvents row with a project directory name, an empty working directory and no other write flag");
+  }
+  if (!configDir) throw new Refusal("a memory write needs the config directory; the row was not run");
+  return path.join(configDir, "projects", def.projectDirName, "memory");
+}
+// The start of a change inside that directory as memoryChangesBetween in live.mjs labels it (the config
+// directory's label there is "config-dir"), or null on any other row.
+export const ownMemoryChangePrefix = (def) => (def?.autoMemoryWrites ? `config-dir/projects/${def.projectDirName}/memory/` : null);
+// The one file pattern an `autoMemoryWrites` rule names in that directory. In a rule, `*` stays inside one
+// directory (gitignore patterns, code.claude.com/docs/en/permissions, "Read and Edit"), so it holds MEMORY.md
+// and any other .md file directly in it, and nothing below or beside it.
+export const MEMORY_RULE_PATTERN = "*.md";
 // A turn's prompt as sent: the placeholder, where a prompt has one, becomes the row's file path.
 export function turnPrompt(def, turn, cwd, configDir = null) {
   if (!turn.prompt.includes(WRITE_PATH_PLACEHOLDER)) return turn.prompt;
@@ -390,7 +448,20 @@ export function turnPrompt(def, turn, cwd, configDir = null) {
 // followed), and a real path that is not the directory the row uses, read in the rule's own form, refuses:
 // the rule would name a path the session does not write to.
 const ruleDir = (p) => rulePath(p).replace(/\/+$/, "");
+// On an `autoMemoryWrites` row the rule names the memory directory's .md files (MEMORY_RULE_PATTERN), composed and
+// checked the same way: the directory's own path may hold no pattern character, and the pattern is the only one.
 export function hookWriteRule(def, turn, cwd, fs = null, configDir = null) {
+  if (def?.autoMemoryWrites) {
+    if (!turn?.allowWrite) return null;
+    const named = autoMemoryWriteDir(def, configDir);
+    const dir = fs ? resolveReal(named, fs) : named;
+    if (fs && ruleDir(dir) !== ruleDir(path.resolve(named))) {
+      throw new Refusal("the row's memory directory resolves elsewhere (a symlink or a short name), so its write rule cannot name the directory the session writes to; the row was not run");
+    }
+    const base = ruleDir(dir);
+    if (RULE_PATTERN_CHARS_RE.test(base)) throw new Refusal("the memory directory's path holds a character a permission rule reads as a pattern; refusing");
+    return `${WRITE_RULE_TOOL}(${base}/${MEMORY_RULE_PATTERN})`;
+  }
   if (!def?.hookWriteTarget || !turn?.allowWrite) return null;
   const named = hookWriteDir(def, cwd, configDir);
   const dir = fs ? resolveReal(named, fs) : named;

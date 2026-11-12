@@ -14,7 +14,7 @@ import {
 import { appendLimit, appendReservation, appendSettlement, readRecord, recordModelTotal, recordTotal } from "./campaign.mjs";
 import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./connector.mjs";
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
-import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, hookWriteDir, hookWriteRule, nonceCode, pickCaptureTool, seedLine, showsWrites, turnPrompt, turnTools, writesMemory } from "./rows.mjs";
+import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, autoMemoryWriteDir, hookWriteDir, hookWriteRule, nonceCode, ownMemoryChangePrefix, pickCaptureTool, seedLine, showsWrites, turnPrompt, turnTools, writesMemory } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
 import { INCONCLUSIVE, VERDICTS, captureList, collect, hookSummary, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
@@ -350,9 +350,10 @@ async function rowAttempt(ctx, def) {
   const settingsPath = autoMemory ? f["auto-memory-settings"] : f.settings;
   if (!settingsPath) throw new Refusal("no settings file for this row");
   // The seed: one neutral MEMORY.md line with a fresh nonce, written before the snapshot so it is the
-  // baseline and never counted as a change. Turn 2's probe asks for it back.
+  // baseline and never counted as a change. Turn 2's probe asks for it back. An `autoMemoryWrites` row has no
+  // probe, so it gets no seed, and with no seed its verdict is never read with a probe.
   let seed = null;
-  if (autoMemory && projectDirName) {
+  if (autoMemory && projectDirName && !def.autoMemoryWrites) {
     const nonce = randomBytes(4).toString("hex");
     seed = { projectDirName, nonce, line: seedLine(nonce), code: nonceCode(nonce), file: memoryFile(f, projectDirName) };
     try {
@@ -370,6 +371,17 @@ async function rowAttempt(ctx, def) {
     hookDir = hookWriteDir(def, cwd, f["config-dir"]);
     try {
       fs.mkdirSync(hookDir, { recursive: true });
+    } catch {
+      io.err("could not create the memory directory: no call made");
+      return { exitCode: EXIT.STOPPED };
+    }
+  }
+  // An `autoMemoryWrites` row: the session's own memory directory is made here, empty and before the snapshot, so
+  // its real path can be read for the directory rule and every file in it afterwards was written during the row.
+  if (def.autoMemoryWrites) {
+    const ownDir = autoMemoryWriteDir(def, f["config-dir"]);
+    try {
+      fs.mkdirSync(ownDir, { recursive: true });
     } catch {
       io.err("could not create the memory directory: no call made");
       return { exitCode: EXIT.STOPPED };
@@ -528,7 +540,7 @@ async function rowAttempt(ctx, def) {
       }
       // A memory-directory row: an older version ignores the name, so the file is then under the config
       // directory's projects/, but not in the directory that version would use for auto memory. A note only.
-      if (memoryDir && i === 0 && s.init?.claude_code_version && !versionAtLeast(s.init.claude_code_version, PROJECT_DIR_MIN_VERSION)) {
+      if ((memoryDir || def.autoMemoryWrites) && i === 0 && s.init?.claude_code_version && !versionAtLeast(s.init.claude_code_version, PROJECT_DIR_MIN_VERSION)) {
         summary.notes.push(`CLAUDE_CODE_PROJECT_DIR_NAME needs Claude Code v${PROJECT_DIR_MIN_VERSION} or later; init shows ${s.init.claude_code_version}, so the file was not written to this session's own memory directory`);
       }
       // On the probe, what would stop a routing turn is a probe error: the row is INCONCLUSIVE, after its spend is settled above.
@@ -660,7 +672,10 @@ async function rowAttempt(ctx, def) {
   if (JSON.stringify(snapshotTree(repoRoot, fs)) !== JSON.stringify(beforeClone)) hygieneFailures.push("the clone changed during the row");
   if (beforeTree && JSON.stringify(snapshotTree(cwd, fs)) !== JSON.stringify(beforeTree)) hygieneFailures.push("the plugin directory changed during the row");
   // A row stopped before its verdict still says so: the verdict above reads the same list.
-  if (memoryChanges.length && summary.partial) hygieneFailures.push(`auto memory or CLAUDE.md changed: ${memoryChanges.join(", ")}`);
+  // On an `autoMemoryWrites` row a change inside its own memory directory is what the row looks for, not hygiene.
+  const ownPrefix = ownMemoryChangePrefix(def);
+  const strayMemory = ownPrefix ? memoryChanges.filter((p) => !p.startsWith(ownPrefix)) : memoryChanges;
+  if (strayMemory.length && summary.partial) hygieneFailures.push(`auto memory or CLAUDE.md changed: ${strayMemory.join(", ")}`);
   for (const h of hygieneFailures) {
     summary.notes.push(h);
     io.out(`hygiene failure: ${h}`);

@@ -7,6 +7,7 @@ import {
   CAPTURE_RE, READ_TOOL_RE, PROJECT, ROWS, ROUTE_ROW_NAMES, SERVER_NAME, T4_OFFER_PHRASE, ISSUE2_OFFER_PHRASE, pickCaptureTool,
   CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK, T1_HOOK_STEER, T1_HOOK_WORDS, T1_MEMORY_HOOK, T1_MEMORY_HOOK_STEER, T1_MEMORY_HOOK_WORDS,
   T2_HOOK, T2_HOOK_STEER, T3B, hookWritePath, writesMemory,
+  T1_AUTO_MEMORY_HOOK, T1_AUTO_MEMORY_HOOK_WORDS, autoMemoryWriteDir, ownMemoryChangePrefix,
 } from "./rows.mjs";
 import { JUDGMENT_ID_RE, NOT_SHOWN } from "./spend.mjs";
 
@@ -201,6 +202,8 @@ const t4Offer = (s) => readOffer(s.assistant_text, T4_OFFER_PHRASE, ROWS.T4.turn
 export function turnGate(row, s, { cwd, configDir } = {}) {
   if (!success(s)) return `turn 1 had no success result (${s?.result?.subtype ?? "none"})`;
   if (row === T1_HOOK || row === T1_MEMORY_HOOK) return hookWriteTurn1(row, s, { cwd, configDir }).fault;
+  // T1-auto-memory-hook asks for no write, so a turn 1 that saved nothing still goes on: see autoMemoryTurn1.
+  if (row === T1_AUTO_MEMORY_HOOK) return autoMemoryTurn1(s, { cwd, configDir }).fault;
   if (row !== "T4") return null;
   if (captureAttempted(s)) return "captured before confirmation";
   const offer = t4Offer(s);
@@ -831,9 +834,107 @@ const verdictHookWrite = (row) => ([a, b], { cwd, configDir, filesWrittenAll = [
 export const verdictT1Hook = verdictHookWrite(T1_HOOK);
 export const verdictT1MemoryHook = verdictHookWrite(T1_MEMORY_HOOK);
 
+// T1-auto-memory-hook: auto memory on and no ask to write, so whether a memory file is saved at all is the
+// model's choice. Each INCONCLUSIVE reading has its own note, so a run that saved nothing never reads as a
+// hook result.
+export const MEMORY_NOT_SAVED_NOTE = "no memory file was written by a Write or Edit call in turn 1: the model did not save to auto memory, or saved some other way; not in the row's control, and not a hook result";
+export const MEMORY_NO_TOOL_NOTE = "memory changed with no file tool call: the memory directory changed on disk in turn 1 but no Write or Edit call targeted it, so auto memory may not go through the file tools, and the PostToolUse hook cannot see such a save";
+export const INDEX_ONLY_NOTE = "only MEMORY.md was written by a file tool call in turn 1: the memory trigger skips the index file by design (memory-trigger.mjs), so no memory steer could follow";
+export const MEMORY_WRITE_DENIED_NOTE = "a Write or Edit to the memory directory was denied or errored: the directory rule may not match the path auto memory used; read the evidence";
+// Consistent with T1-memory-hook: a Write or Edit that ran in the session's own stream with no PostToolUse event
+// after it is the same hook failure whoever chose the call, so it is FAIL, and this is the finding.
+export const OWN_SAVE_NO_HOOK_NOTE = "finding: Claude Code's own memory save ran as a file tool call, but no PostToolUse hook event came after it, so its own memory saves do not reach the plugin's hook";
+
+// Turn 1 of T1-auto-memory-hook. `fault`: a capture, or a write anywhere but a .md file directly in the session's
+// memory directory (denied or not), or null. `saves`: the Write and Edit calls to such a file that ran; `topic`,
+// those not to MEMORY.md (the hook script's own test, letter case included); `wrote`: the index in tool_uses of
+// the first `topic` call, or -1; `denied`: calls to such a file that did not run. Without the working and config
+// directories nothing is placed in the memory directory, so every write counts as one elsewhere.
+function autoMemoryTurn1(a, { cwd, configDir } = {}) {
+  const def = ROWS[T1_AUTO_MEMORY_HOOK];
+  const dir = cwd && configDir ? normalPath(autoMemoryWriteDir(def, configDir)) : null;
+  const where = (u) => (dir && typeof u.input?.file_path === "string" && u.input.file_path ? normalPath(path.resolve(cwd, u.input.file_path)) : null);
+  const inDir = (u) => { const p = where(u); return Boolean(p) && path.posix.dirname(p) === dir && /\.md$/i.test(p); };
+  const isIndex = (u) => { const p = where(u); const base = path.posix.basename(p); return base === "MEMORY.md" || (/^[a-z]:\//.test(p) && base === "memory.md"); };
+  const writes = a.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
+  const elsewhere = writes.filter((u) => !inDir(u));
+  const mine = writes.filter((u) => inDir(u) && (u.name === "Write" || u.name === "Edit"));
+  const saves = mine.filter((u) => !denied(a, u.id) && !resultOf(a, u.id)?.is_error);
+  const topic = saves.filter((u) => !isIndex(u));
+  let fault = null;
+  if (captureAttempted(a)) fault = "captured before confirmation";
+  else if (elsewhere.length) fault = `turn 1 wrote outside the memory directory's .md files: ${elsewhere.map((u) => `${u.name} ${targetOf(u.input)}${denied(a, u.id) ? " (denied)" : ""}`).join("; ")}`;
+  return { fault, saves, topic, wrote: topic.length ? a.tool_uses.indexOf(topic[0]) : -1, denied: mine.filter((u) => !saves.includes(u)), base: (u) => path.posix.basename(where(u)) };
+}
+
+// The verdict. `memoryChanges` (turn 1's, labelled, from live.mjs) inside the session's memory directory are what
+// the row looks for; one anywhere else fails it. `filesWrittenAll`: any file in the working directory fails it.
+// PASS: a Write or Edit to a .md file there other than MEMORY.md ran in turn 1, a PostToolUse hook_started after it
+// and a PostToolUse hook_response after it holding the memory steer (T1_MEMORY_HOOK_STEER), an offer at the stated
+// phrase, no capture in turn 1, and turn 2 exactly one accepted capture holding the person's words. The prompt
+// trigger's capture reminder is read under UserPromptSubmit only and never stands in for the memory steer.
+export function verdictT1AutoMemoryHook([a, b], { cwd, configDir, filesWrittenAll = [], memoryChanges = [] } = {}) {
+  const f = [];
+  const row = T1_AUTO_MEMORY_HOOK;
+  const def = ROWS[row];
+  if (captureAttempted(a)) f.push("captured before confirmation");
+  const gate = turnGate(row, a, { cwd, configDir });
+  if (gate && gate !== "captured before confirmation") f.push(gate);
+  const t1 = autoMemoryTurn1(a, { cwd, configDir });
+  const prefix = ownMemoryChangePrefix(def);
+  const inside = memoryChanges.filter((p) => p.startsWith(prefix)).map((p) => p.slice(prefix.length));
+  const outside = memoryChanges.filter((p) => !p.startsWith(prefix));
+  if (outside.length) f.push(`auto memory or CLAUDE.md changed outside the session's memory directory: ${outside.join(", ")}`);
+  if (filesWrittenAll.length) f.push(`files written in the working directory: ${filesWrittenAll.join(", ")}`);
+  const two = b ?? { tool_uses: [], tool_results: [], denied_captures: [], denied_ids: new Set() };
+  if (!b) f.push("turn 2 did not run");
+  const later = two.tool_uses.filter((u) => WRONG_ROUTE_TOOLS.includes(u.name));
+  if (later.length) f.push(`turn 2 wrote: ${later.map((u) => `${u.name} ${targetOf(u.input)}${denied(two, u.id) ? " (denied)" : ""}`).join("; ")}`);
+  const tool = pickCaptureTool(a.init?.tools);
+  const caps = two.tool_uses.filter((u) => CAPTURE_RE.test(u.name));
+  const other = caps.filter((u) => u.name !== tool);
+  if (other.length) f.push(`turn 2 attempted another capture tool: ${other.map((u) => u.name).join(", ")}`);
+  const mine = caps.filter((u) => u.name === tool);
+  const accepted = mine.filter((u) => writeAccepted(two, u.id));
+  if (b && (mine.length !== 1 || accepted.length !== 1)) f.push(`turn 2 ${tool} calls: ${mine.length}, accepted: ${accepted.length} (expected 1 and 1)`);
+  else if (b && !inputStrings(mine[0].input).some((t) => hasPhrase(t, T1_AUTO_MEMORY_HOOK_WORDS))) f.push(`turn 2's capture input does not hold the person's words ("${T1_AUTO_MEMORY_HOOK_WORDS}")`);
+  if (b && !success(b)) f.push(`turn 2 result was ${b.result?.subtype ?? "none"}`);
+  f.push(...contextFails(b ? [a, b] : [a]));
+
+  const post = t1.wrote >= 0 ? (a.hook_events ?? []).filter((e) => e.toolUsesBefore > t1.wrote && e.hook_event === "PostToolUse") : [];
+  const started = post.some((e) => e.subtype === "hook_started");
+  const steered = post.some((e) => e.subtype === "hook_response" && e.strings.some((t) => t.includes(T1_MEMORY_HOOK_STEER)));
+  const offered = isOffer(a.assistant_text, def.offerPhrase, def.turns[0].prompt);
+  if (t1.wrote >= 0 && !post.length) f.push(OWN_SAVE_NO_HOOK_NOTE);
+  // An offer is owed only once the memory steer was seen to reach the session.
+  if (started && steered && !offered) f.push(`turn 1 made no offer with the stated phrase ("${def.offerPhrase}")`);
+
+  const toolFiles = new Set(t1.saves.map(t1.base));
+  const untracked = inside.filter((p) => !toolFiles.has(p) && !p.endsWith("/"));
+  const notes = [
+    `capture tool: ${tool}`,
+    `memory files written by a file tool in turn 1: ${t1.saves.length ? t1.saves.map((u) => `${u.name} ${t1.base(u)}`).join("; ") : "none"}`,
+    `memory directory changes on disk after turn 1: ${inside.length ? inside.join(", ") : "none"}`,
+    `PostToolUse after the save: hook_started ${started ? "seen" : "not seen"}, memory steer in a hook_response ${steered ? "seen" : "not seen"}`,
+    `UserPromptSubmit capture reminder: ${steerSeen(a, T2_HOOK_STEER, { event: "UserPromptSubmit" }) ? "seen" : "not seen"} (never counted as the memory steer)`,
+    `turn 1 offered at the stated phrase: ${offered ? "yes" : "no"}`,
+    OFFER_HEURISTIC_NOTE,
+  ];
+  if (t1.denied.length) notes.push(MEMORY_WRITE_DENIED_NOTE);
+  if (t1.saves.length && untracked.length) notes.push(`${MEMORY_NO_TOOL_NOTE} (${untracked.join(", ")})`);
+  if (f.length) return { verdict: "FAIL", notes: [...f, ...notes] };
+  if (t1.wrote < 0) {
+    const why = t1.saves.length ? INDEX_ONLY_NOTE : untracked.length ? MEMORY_NO_TOOL_NOTE : MEMORY_NOT_SAVED_NOTE;
+    return { verdict: INCONCLUSIVE, notes: [why, ...notes] };
+  }
+  if (!(started && steered)) return { verdict: INCONCLUSIVE, notes: [MEMORY_STEER_NOT_SEEN_NOTE, ...notes] };
+  return { verdict: "PASS", notes };
+}
+
 export const VERDICTS = {
   T2: verdictT2, T4: verdictT4, T5: verdictT5, T6: verdictT6, ISSUE2: verdictIssue2,
   [T3B]: verdictT3b, [T1_HOOK]: verdictT1Hook, [T2_HOOK]: verdictT2Hook, [T1_MEMORY_HOOK]: verdictT1MemoryHook,
+  [T1_AUTO_MEMORY_HOOK]: verdictT1AutoMemoryHook,
   "T4O-S": verdictOfferRow("T4O-S"), "T4O-N": verdictOfferRow("T4O-N"), "T4O-C": verdictDiagnosticOffer("T4O-C"),
   // ROUTE-1 and every variant: verdictRoute1 on turn 1; a `memoryOff` row adds its note. An `autoMemory`
   // row's verdict is then read with its probe in live.mjs (memoryProbeVerdict).

@@ -17,6 +17,8 @@ const ROW = "ROUTE-1";
 // The routing rows with auto memory on (ROUTE-1's shape) and off (one turn, no probe).
 const ON_ROWS = ["ROUTE-1", "ROUTE-1-SAVE-ON", "ROUTE-1-REMEMBER-ON", "ROUTE-1-RECORD", "ROUTE-1-QUADRON"];
 const OFF_ROWS = ["ROUTE-1-OFF", "ROUTE-1-SAVE-OFF", "ROUTE-1-REMEMBER-OFF"];
+// The one row outside routing with auto memory on: a hook row, with its own tests.
+const AUTO_HOOK_ROW = "T1-auto-memory-hook";
 const COMMIT = "mcp__quadron__quad_commit";
 const DECIDED = "We bill annually only; monthly plans are ruled out.";
 const MEMORY_FILE = "/work/cwd/MEMORY.md";
@@ -226,8 +228,9 @@ test("ROUTE-1 dry run: two turns, caps 6/1, the shown-not-allowed note, the proj
 // ---------------------------------------------------------------- auto memory: on for the ROUTE-1 ON rows only
 
 test("autoMemory: only the ROUTE-1 ON variants have it, and ROUTE-1's prompt still names no Quadron, quad or project (save without naming Quadron)", () => {
-  assert.deepEqual(ROW_NAMES.filter((r) => ROWS[r].autoMemory), ON_ROWS);
-  assert.deepEqual(AUTO_MEMORY_ROW_NAMES, ON_ROWS);
+  // T1-auto-memory-hook, a hook row, is the one other row with auto memory on (auto-memory-hook-row.test.mjs).
+  assert.deepEqual(ROW_NAMES.filter((r) => ROWS[r].autoMemory), [...ON_ROWS, AUTO_HOOK_ROW]);
+  assert.deepEqual(AUTO_MEMORY_ROW_NAMES, [...ON_ROWS, AUTO_HOOK_ROW]);
   for (const cue of [/quadron/i, /\bquad/i, /project/i]) assert.doesNotMatch(ROWS[ROW].turns[0].prompt, cue);
 });
 
@@ -348,7 +351,7 @@ test("other rows keep auto memory disabled: the env sets 1, --settings is loaded
     assert.equal(options.env[AUTO_MEMORY_VAR], "1", row);
     assert.equal(options.settings, b.settings, row);
   }
-  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n) && !ROWS[n].noSession)) assert.ok(!ROWS[r].autoMemory, r);
+  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n) && n !== AUTO_HOOK_ROW && !ROWS[n].noSession)) assert.ok(!ROWS[r].autoMemory, r);
   const named = box();
   const refused = await run(named, named.argv("T2", {}, ["--auto-memory-settings", named.autoMemorySettings]), [T2_OK()]);
   assert.equal(refused.r.exitCode, 2);
@@ -466,8 +469,9 @@ test("other rows: no project dir name in the env, no seed in the config dir, no 
     assert.equal(out.r.summary.memoryProbe, undefined, row);
   }
   // The one row that names a project directory with auto memory off writes to the memory directory itself.
-  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n))) assert.ok((!ROWS[r].projectDirName || ROWS[r].hookWriteDir === "memory") && !(ROWS[r].turns ?? []).some((t) => t.probe), r);
-  assert.deepEqual(ROW_NAMES.filter((n) => !ON_ROWS.includes(n) && ROWS[n].projectDirName), ["T1-memory-hook"]);
+  // T1-auto-memory-hook names one with auto memory on, and has no probe either.
+  for (const r of ROW_NAMES.filter((n) => !ON_ROWS.includes(n))) assert.ok((!ROWS[r].projectDirName || ROWS[r].hookWriteDir === "memory" || r === AUTO_HOOK_ROW) && !(ROWS[r].turns ?? []).some((t) => t.probe), r);
+  assert.deepEqual(ROW_NAMES.filter((n) => !ON_ROWS.includes(n) && ROWS[n].projectDirName), ["T1-memory-hook", AUTO_HOOK_ROW]);
   const hooked = box();
   const out = await run(hooked, hooked.argv("T2"), [T2_OK()], { testOptionsHook: (o) => (o.env ? { ...o, env: { ...o.env, [PROJECT_DIR_VAR]: "route1" } } : o) });
   assert.equal(out.r.exitCode, 2);
@@ -603,7 +607,7 @@ test("OFF variants refuse --auto-memory-settings with no call, naming the auto-m
     const out = await run(b, b.argv(r, {}, ["--auto-memory-settings", b.autoMemorySettings]), [capturedRow()]);
     assert.equal(out.r.exitCode, 2, r);
     assert.equal(out.client.calls.length, 0, r);
-    assert.match(out.d.io.errors.join(" "), new RegExp(`applies to an auto-memory row only \\(${ON_ROWS.join(", ")}\\)`), r);
+    assert.match(out.d.io.errors.join(" "), new RegExp(`applies to an auto-memory row only \\(${[...ON_ROWS, AUTO_HOOK_ROW].join(", ")}\\)`), r);
   }
 });
 
