@@ -86,10 +86,31 @@ Malformed or empty stdin, or an unexpected event, gives exit 0, no output and on
 - The PostToolUse handler without an `if` filter starts on a Write at an absolute Windows path: on 2026-11-10 with 0.2.2 for `CLAUDE.md`, and on 2026-11-11 with 0.2.2 for a memory file in the session's own memory directory. Versions up to 0.2.1 filtered with `if` path rules (`Edit(//**/CLAUDE.md)` and two more); with them no PostToolUse handler started for a Write of `CLAUDE.md` on Windows, though the script matched the same input when run by hand. 0.2.2 removed them.
 - With the hooks loaded, the model offered first and captured only after the yes in each of the three runs that had a yes turn (T1-hook at 7c3aa12 and at 0182d3a, T1-memory-hook at d539725): three runs, not a rate.
 
+**Observed in interactive sessions** (two ordinary interactive Claude Code sessions run by hand on 2026-11-11, plugin 0.2.3 at d2f64e1, Claude Code 2.1.311, Windows host, one attempt per cell, read from each session's own transcript and debug log). "Shown" means the reminder is in the session record, where the model receives it; it is not text displayed to the person.
+
+- Session A, plugin loaded from a checkout:
+  - the SessionStart reminder was shown on startup, after `/clear` and after compaction;
+  - the UserPromptSubmit reminder was shown on a prompt asking about past decisions and on a prompt stating a decision;
+  - the PostToolUse reminder was shown after a Write of a memory file, after each of two Edits of a memory file, and after a write to an instructions file.
+- Session B, plugin installed from a local marketplace, no connector:
+  - the SessionStart reminder was shown on startup and after `/clear`;
+  - the UserPromptSubmit reminder was shown on a prompt asking about past decisions and on a prompt stating a decision;
+  - the PostToolUse reminder was shown after a Write of a memory file;
+  - all eight hook runs came from the installed plugin, none from a checkout.
+- In both sessions no capture call was made and no hook reported an error.
+
+**Not shown by these sessions:**
+
+- On resume (session A) the hook ran and logged the reminder text, but the transcript holds no reminder line, and no prompt followed the resume. Whether the reminder reaches the model on resume is not shown.
+- The memory writes in both sessions were asked for by the prompt, so item 1 of "Still untested" stands unchanged.
+- That session A's connector was on is the configuration as set up, not read from the session record.
+- Each cell is one attempt, not a rate.
+- Session B did not exercise compaction, resume, an Edit or an instructions file.
+
 **Still untested:**
 
 1. Claude Code's own auto-memory saves reaching the hook. The 2026-11-11 run had auto memory off and the prompt asked for the Write; that Claude Code writes its own memories with the Write or Edit tool in the main session is read from the docs, not measured.
-2. An ordinary interactive Claude Code session with the plugin installed or loaded with `--plugin-dir`. Every run above was a scripted Agent SDK session.
+2. In an ordinary interactive Claude Code session: the reminder reaching the model after a resume, an install from a remote marketplace, and repeat runs of the cells above.
 3. Memory written to a custom `autoMemoryDirectory` is still not covered: it sits outside the config directory's `projects/*/memory/`, which is all the script accepts.
    The `CLAUDE_CONFIG_DIR` check compares text, so a config directory reached through a symlink, or one differing only in letter case on a case-insensitive POSIX filesystem, is not matched.
 4. Other platforms: a host other than Windows (every run above was on Windows), and any client other than Claude Code.
