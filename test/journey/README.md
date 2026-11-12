@@ -4,6 +4,8 @@
 
 The plugin's T1-T5 results in `plugins/claude-code/README.md` stand at their recorded commits. The old runner is reachable through git history at `cdb09e4`.
 
+In a row's `summary.json`, `captureAttempts` lists the capture calls the permission layer denied. `captures` lists every capture call as `{turn, name, outcome}`, with outcome `accepted`, `denied`, `error` or `no_result` (the stream holds no result for the call, so how it went is not known).
+
 ## Hook rows
 
 Four rows of the SDK harness (`lib/rows.mjs`, ids in `HOOK_ROW_NAMES`) observe the plugin's own hooks. The plugin loads through `--plugin-dir` as on every plugin row, and its hooks load with it. Each of these rows also sets `includeHookEvents`, so the stream carries the SDK's `hook_started`, `hook_progress` and `hook_response` messages. Every one goes to `stream.jsonl`, and `summary.json` lists each turn's as `hookEvents` (`hook_event`, `hook_name`, `subtype`, `text`). The SessionStart messages arrive before init. On these rows they are read, not a load stop, and every other row keeps its plain note. The output field of a `hook_response` is not documented, so its text is every non-empty string in the message outside the identifying and status fields.
