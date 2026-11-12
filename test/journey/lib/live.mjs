@@ -16,7 +16,7 @@ import { assertStaging, checkAccount, mcpServersFor, mintAccessToken } from "./c
 import { FindingsLog, haikuFailureFinding, scanSignals } from "./findings.mjs";
 import { ROWS, CAPTURE_PLACEHOLDER, CAPTURE_TOOLS, SERVER_NAME, T3_CHECK, autoMemoryWriteDir, hookWriteDir, hookWriteRule, nonceCode, ownMemoryChangePrefix, pickCaptureTool, seedLine, showsWrites, turnPrompt, turnTools, writesMemory } from "./rows.mjs";
 import { buildOptions, inScope } from "./options.mjs";
-import { INCONCLUSIVE, VERDICTS, collect, hookSummary, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
+import { INCONCLUSIVE, VERDICTS, captureList, collect, hookSummary, memoryProbeVerdict, connectorCalled, initStatuses, quadContextCalls, skillLabel, turnGate } from "./verdicts.mjs";
 import { initOnly } from "./initonly.mjs";
 import { runGatedCall } from "./call.mjs";
 import { Evidence, newUniqueDir } from "./evidence.mjs";
@@ -404,7 +404,7 @@ async function rowAttempt(ctx, def) {
     account: { check: account.check, note: account.note },
     override: override ? { reason: override.reason, expires: override.expires, lifts: override.lifts } : null,
     init: null, toolCalls: [], answer: "", turns: [], totalCostUsd: 0, verdict: null, notes: [], stoppedBecause: null,
-    captureAttempts: [], quadContextCalls: 0, judgmentId, savedWording, signedClaim: null, routing: null, quadName: null, citesProject: null, cutOff: false,
+    captureAttempts: [], captures: [], quadContextCalls: 0, judgmentId, savedWording, signedClaim: null, routing: null, quadName: null, citesProject: null, cutOff: false,
   };
   let exitCode = EXIT.OK;
   let authFailed = false;
@@ -630,7 +630,11 @@ async function rowAttempt(ctx, def) {
   }
 
   summary.quadContextCalls = quadContextCalls(streams);
+  // captureAttempts lists the capture calls the permission layer denied; `captures` lists every capture
+  // call, as {turn, name, outcome} (see captureList). A call with no result in the stream reads
+  // "no_result", never "accepted".
   summary.captureAttempts = streams.flatMap((s) => s.denied_captures);
+  summary.captures = captureList(streams);
   summary.answer = streams.map((s) => s.result?.result ?? s.assistant_text ?? "").filter(Boolean).join("\n");
   summary.toolCalls = streams.flatMap((s) => s.tool_uses.map((u) => {
     const r = s.tool_results.find((x) => x.tool_use_id === u.id);
