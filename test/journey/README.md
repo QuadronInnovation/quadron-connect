@@ -4,7 +4,7 @@
 
 The plugin's T1-T5 results in `plugins/claude-code/README.md` stand at their recorded commits. The old runner is reachable through git history at `cdb09e4`.
 
-In a row's `summary.json`, `captureAttempts` lists the capture calls the permission layer denied. `captures` lists every capture call as `{turn, name, outcome}`, with outcome `accepted`, `denied` or `error`.
+In a row's `summary.json`, `captureAttempts` lists the capture calls the permission layer denied. `captures` lists every capture call as `{turn, name, outcome}`, with outcome `accepted`, `denied`, `error` or `no_result` (the stream holds no result for the call, so how it went is not known).
 
 ## Hook rows
 

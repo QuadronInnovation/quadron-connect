@@ -798,6 +798,14 @@ test("F12. captures lists every capture call by turn and outcome; captureAttempt
   }
 });
 
+test("F12. a capture call with no result in the stream is listed as no_result, not accepted", async () => {
+  const b = box();
+  const { r } = await run(b, b.argv("T4"), [T4_OK()[0],
+    [init({ session_id: "s9" }), toolUse("u1", CAPTURE, { quad_name: "quadron-connect", decided: WORDING }), result(0.15, { session_id: "s9", result: "Saved." })]]);
+  assert.deepEqual(r.summary.captures, [{ turn: 2, name: CAPTURE, outcome: "no_result" }]);
+  assert.deepEqual(r.summary.captureAttempts, []);
+});
+
 test("F12. T4 turn 1 leaves capture off the allow-list; turn 2 is the one turn that lists it, and only the one tool", async () => {
   const b = box();
   const { client } = await run(b, b.argv("T4"), T4_OK());

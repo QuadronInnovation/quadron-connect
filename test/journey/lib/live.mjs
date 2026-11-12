@@ -619,7 +619,8 @@ async function rowAttempt(ctx, def) {
 
   summary.quadContextCalls = quadContextCalls(streams);
   // captureAttempts lists the capture calls the permission layer denied; `captures` lists every capture
-  // call, as {turn, name, outcome} (see captureList).
+  // call, as {turn, name, outcome} (see captureList). A call with no result in the stream reads
+  // "no_result", never "accepted".
   summary.captureAttempts = streams.flatMap((s) => s.denied_captures);
   summary.captures = captureList(streams);
   summary.answer = streams.map((s) => s.result?.result ?? s.assistant_text ?? "").filter(Boolean).join("\n");

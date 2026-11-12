@@ -124,13 +124,18 @@ const fin = (fails, extra = {}) => ({ verdict: fails.length ? "FAIL" : "PASS", n
 export const captureAttempted = (s) => called(s, CAPTURE_RE) || s.denied_captures.length > 0;
 // Every capture call of a row, one stream per turn, as {turn, name, outcome}: "denied" when the permission
 // layer denied it (its id is in denied_ids, or a denial has no tool_use), "error" for an error result,
-// else "accepted". A denial with a tool_use is matched to it by name, so it is listed once.
+// "accepted" for a result that is no error, and "no_result" when the stream holds no result for the call
+// (the turn ended first), so how it went is not known. A denial with a tool_use is matched to it by name,
+// so it is listed once.
 export function captureList(streams) {
   return streams.flatMap((s, i) => {
     const turn = i + 1;
     const unmatched = [...s.denied_captures];
     const calls = s.tool_uses.filter((u) => CAPTURE_RE.test(u.name)).map((u) => {
-      if (!s.denied_ids.has(u.id)) return { turn, name: u.name, outcome: resultOf(s, u.id)?.is_error ? "error" : "accepted" };
+      if (!s.denied_ids.has(u.id)) {
+        const r = resultOf(s, u.id);
+        return { turn, name: u.name, outcome: !r ? "no_result" : r.is_error ? "error" : "accepted" };
+      }
       const k = unmatched.findIndex((d) => d.name === u.name);
       if (k >= 0) unmatched.splice(k, 1);
       return { turn, name: u.name, outcome: "denied" };
