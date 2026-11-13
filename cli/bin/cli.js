@@ -159,7 +159,7 @@ function cmdUninstall() {
 function cmdConfig(args) {
   const client = args.filter((a) => !a.startsWith("-"))[1];
   if (!clientConfig.CLIENTS.includes(client)) {
-    process.stderr.write("usage: quadron-connect config <cursor, codex or chatgpt>\n");
+    process.stderr.write("usage: quadron-connect config <cursor, codex, chatgpt, gemini or antigravity>\n");
     process.exit(2);
   }
   let out;
