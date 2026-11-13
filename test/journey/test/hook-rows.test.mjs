@@ -10,7 +10,7 @@ import { main } from "../lib/main.mjs";
 import { buildOptions } from "../lib/options.mjs";
 import { assertWriteRules } from "../lib/guards.mjs";
 import {
-  ROWS, ROW_NAMES, HOOK_ROW_NAMES, CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK_STEER, T1_HOOK_WORDS, T2_HOOK_STEER, WRITE_RULE_TOOL, hookWriteRule, rulePath, showsWrites, turnTools,
+  ROWS, ROW_NAMES, HOOK_ROW_NAMES, CONNECTED_SENTENCE, PLUGIN_REMINDER, T1_HOOK_STEER, T1_HOOK_WORDS, T2_HOOK_STEER, T2_HOOK_STEER_CORE, WRITE_RULE_TOOL, hookWriteRule, rulePath, showsWrites, turnTools,
 } from "../lib/rows.mjs";
 import {
   HOOK_NOT_OBSERVED_NOTE, HOOK_STARTED_ONLY_NOTE, HOOK_STEER_NOT_SEEN_NOTE, INCONCLUSIVE, NO_HOOK_OUTPUT_NOTE, VERDICTS, collect, hookEventsOf, hookSummary,
@@ -213,6 +213,32 @@ test("T2-hook INCONCLUSIVE: a UserPromptSubmit event without the steer text, or 
     assert.ok(v.notes.includes("UserPromptSubmit steer text: not seen"));
   }
   assert.match(HOOK_STEER_NOT_SEEN_NOTE, /hook ran, but its steer text was not in the recorded output; a hand read of the evidence is needed/);
+});
+
+// The capture reminder as a plugin before 0.2.3 printed it, the wording in the earlier runs' recorded
+// evidence: the current text minus its last sentence. Written out, not derived, on purpose.
+const CAPTURE_TEXT_BEFORE_0_2_3 = "Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.";
+
+test("T2-hook's steer core: a prefix of the plugin's CAPTURE_TEXT that ends at the yes sentence, and the pre-0.2.3 wording is that core", () => {
+  assert.ok(CAPTURE_TEXT.startsWith(T2_HOOK_STEER_CORE));
+  assert.ok(T2_HOOK_STEER_CORE.endsWith("call the capture tool only on a yes."));
+  assert.ok(T2_HOOK_STEER_CORE.length < CAPTURE_TEXT.length);
+  assert.equal(T2_HOOK_STEER_CORE, CAPTURE_TEXT_BEFORE_0_2_3);
+});
+
+test("T2-hook PASS on the steer recorded before plugin 0.2.3 and on the current full text; the recall text or other text stays INCONCLUSIVE", () => {
+  const promptSaid = (context) => said("UserPromptSubmit", JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
+  const verdictOn = (hooks) => VERDICTS[T2H]([turn([init(), ...hooks, assistantText(T2_OFFER), ok(T2_OFFER)])]);
+  for (const [label, context] of [["recorded before 0.2.3", CAPTURE_TEXT_BEFORE_0_2_3], ["current", CAPTURE_TEXT]]) {
+    const v = verdictOn(promptSaid(context));
+    assert.equal(v.verdict, "PASS", `${label}: ${v.notes.join(" ")}`);
+    assert.ok(v.notes.includes("UserPromptSubmit steer text: seen"), label);
+  }
+  for (const context of [RECALL_TEXT, "something else", "call the capture tool only on a yes."]) {
+    const v = verdictOn(promptSaid(context));
+    assert.equal(v.verdict, INCONCLUSIVE, context);
+    assert.equal(v.notes[0], HOOK_STEER_NOT_SEEN_NOTE, context);
+  }
 });
 
 test("T2-hook FAIL: a capture, allowed or denied, is captured before confirmation, with the steer text, without it, or with no hook event; and no offer fails", () => {

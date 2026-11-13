@@ -103,6 +103,13 @@ const T2_HOOK_PROMPT = "I decided we bill annually only; monthly plans are ruled
 // The prompt trigger's capture steer, from the plugin itself: T2-hook passes only with it in a
 // UserPromptSubmit hook event's recorded text.
 export const T2_HOOK_STEER = CAPTURE_TEXT;
+// The verdict matches the steer's stable core: the reminder up to and including the sentence that ends
+// below, so a hook output recorded by a plugin before 0.2.3, which lacked the later sentence, still reads.
+// Derived from the script; with that sentence gone it falls back to the whole text, so a rewording fails
+// a test rather than passing quietly.
+const T2_HOOK_STEER_CORE_END = "call the capture tool only on a yes.";
+const coreEnd = CAPTURE_TEXT.indexOf(T2_HOOK_STEER_CORE_END);
+export const T2_HOOK_STEER_CORE = coreEnd < 0 ? CAPTURE_TEXT : CAPTURE_TEXT.slice(0, coreEnd + T2_HOOK_STEER_CORE_END.length);
 // T1-hook: the file the one allowed Write goes to, in the row's own working directory. A CLAUDE.md, so the
 // plugin's PostToolUse script (memory-trigger.mjs) treats it as an instructions file.
 const HOOK_WRITE_TARGET = "CLAUDE.md";

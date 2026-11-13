@@ -508,6 +508,10 @@ test("connector check. it changes no reservation: a call's record reservation is
 const without = (k) => (o) => { const c = { ...o }; delete c[k]; return c; };
 const STRIPPED = {
   "permission mode default": (o) => ({ ...o, permissionMode: "default" }),
+  "permission mode bypassPermissions": (o) => ({ ...o, permissionMode: "bypassPermissions" }),
+  "permission mode acceptEdits": (o) => ({ ...o, permissionMode: "acceptEdits" }),
+  "permission mode plan": (o) => ({ ...o, permissionMode: "plan" }),
+  "permission mode auto": (o) => ({ ...o, permissionMode: "auto" }),
   "permission mode absent": without("permissionMode"),
   "setting sources absent": without("settingSources"),
   "setting sources holding one": (o) => ({ ...o, settingSources: ["user"] }),

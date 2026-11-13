@@ -54,7 +54,7 @@ present.
 
 ## Hooks
 
-The plugin ships three hooks, declared in `hooks/hooks.json`. They load only where the plugin is enabled, inject context only, never call Quadron themselves, and keep the skill's offer-and-yes rule: anything to keep is offered in one line and saved only after the person says yes.
+The plugin ships three hooks, declared in `hooks/hooks.json`. They load only where the plugin is enabled, inject context only, never call Quadron themselves, and keep the skill's offer-and-yes rule: anything to keep is offered in one line and saved only after the person says yes. An explicit request in the conversation to save or keep a specific thing is that yes: it is saved with no separate offer (since 0.2.3).
 
 These hooks supplement the MCP server and the quadron skill; SKILL.md and the server contract are unchanged. The hooks only improve when Claude Code thinks about Quadron, for more consistent and reliable use.
 
@@ -84,7 +84,7 @@ Malformed or empty stdin, or an unexpected event, gives exit 0, no output and on
 
 - A plugin loaded from its directory loads its hooks in an Agent SDK session: the SessionStart reminder and the UserPromptSubmit capture steer were observed on 2026-11-10 with 0.2.1 and 0.2.2.
 - The PostToolUse handler without an `if` filter starts on a Write at an absolute Windows path: on 2026-11-10 with 0.2.2 for `CLAUDE.md`, and on 2026-11-11 with 0.2.2 for a memory file in the session's own memory directory. Versions up to 0.2.1 filtered with `if` path rules (`Edit(//**/CLAUDE.md)` and two more); with them no PostToolUse handler started for a Write of `CLAUDE.md` on Windows, though the script matched the same input when run by hand. 0.2.2 removed them.
-- With the hooks loaded, the model offered first and captured only after the yes in each of the three runs that had a yes turn (T1-hook at 7c3aa12 and at 0182d3a, T1-memory-hook at d539725): three runs, not a rate.
+- With the hooks loaded, the model offered first and captured only after the yes in each of the three runs that had a yes turn (T1-hook at 7c3aa12 and at 0182d3a, T1-memory-hook at d539725): three runs, not a rate. None of them made an explicit save request; that path, added to the capture reminder in 0.2.3, has not been measured in a scripted run.
 
 **Observed in interactive sessions** (two ordinary interactive Claude Code sessions run by hand on 2026-11-11, plugin 0.2.3 at d2f64e1, Claude Code 2.1.311, Windows host, one attempt per cell, read from each session's own transcript and debug log). "Shown" means the reminder is in the session record, where the model receives it; it is not text displayed to the person.
 
