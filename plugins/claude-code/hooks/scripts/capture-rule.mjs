@@ -1,0 +1,4 @@
+// The skill's capture rule, word for word, shared by the three hook reminders so they never drift
+// from one another or from SKILL.md. The hooks repeat this rule; they add none of their own.
+export const CAPTURE_RULE =
+  'Write to Quadron only on the person\'s yes: offer once, in one line quoting the exact words you would save, and call the capture tool (future_you_capture for a judgment, quad_commit for a note) only after they say yes in this conversation; an explicit request in this conversation to save or keep that specific thing is already the yes, so save it with no separate offer; anything less explicit still gets the offer, including a bare "note this" or a "save this" that leaves unclear which words; on a bare "remember this" that does not name Quadron, ask whether they mean Quadron.';
