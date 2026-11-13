@@ -5,9 +5,10 @@
 // hook, which lists the person's projects, and SKILL.md treats it as proof that hook ran.
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { CAPTURE_RULE } from './capture-rule.mjs';
 
 export const BANNER =
-  'Quadron hooks are active. When the person reaches back to their prior work, call quad_context (or quad_recall inside a project) before answering; when they state a decision, standard or preference, offer once in one line to keep it in Quadron and call the capture tool only on their yes.';
+  `Quadron hooks are active. If quad_* tools are present: when the person reaches back to their prior work, call quad_context with the topic (or quad_recall inside a project) before answering, unless the session already lists what they ask for. When they state a decision, standard or preference: ${CAPTURE_RULE}`;
 
 export const OUTPUT = `${BANNER}\n`;
 

@@ -119,7 +119,9 @@ test("the plugin's PostToolUse hook runs the memory trigger on Write and Edit, a
 test("the steer texts the verdicts look for are the plugin scripts' own output for each row", () => {
   assert.equal(T2_HOOK_STEER, CAPTURE_TEXT);
   const prompt = promptRun(JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: ROWS[T2H].turns[0].prompt }));
-  assert.ok(prompt.stdout.includes(T2_HOOK_STEER));
+  assert.equal(JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext, T2_HOOK_STEER);
+  // The raw stdout is JSON, which escapes the steer's double quotes; the verdict looks for the core.
+  assert.ok(prompt.stdout.includes(T2_HOOK_STEER_CORE));
   assert.equal(T1_HOOK_STEER, "Quadron: you just updated their instructions file:");
   const memory = memoryDecide({ hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: TARGET, content: DECISION } });
   assert.ok(memory.stdout.includes(T1_HOOK_STEER));
@@ -216,25 +218,27 @@ test("T2-hook INCONCLUSIVE: a UserPromptSubmit event without the steer text, or 
 });
 
 // The capture reminder as a plugin before 0.2.3 printed it, the wording in the earlier runs' recorded
-// evidence: the current text minus its last sentence. Written out, not derived, on purpose.
+// evidence. Written out, not derived, on purpose. The shared capture rule replaced its yes sentence, so
+// that wording no longer holds the core and reads INCONCLUSIVE: a hand read of the evidence.
 const CAPTURE_TEXT_BEFORE_0_2_3 = "Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes.";
 
-test("T2-hook's steer core: a prefix of the plugin's CAPTURE_TEXT that ends at the yes sentence, and the pre-0.2.3 wording is that core", () => {
+test("T2-hook's steer core: a prefix of the plugin's CAPTURE_TEXT that ends at the yes clause, with no double quote, so the hook's JSON stdout holds it unescaped", () => {
   assert.ok(CAPTURE_TEXT.startsWith(T2_HOOK_STEER_CORE));
-  assert.ok(T2_HOOK_STEER_CORE.endsWith("call the capture tool only on a yes."));
+  assert.ok(T2_HOOK_STEER_CORE.endsWith("only after they say yes in this conversation;"));
   assert.ok(T2_HOOK_STEER_CORE.length < CAPTURE_TEXT.length);
-  assert.equal(T2_HOOK_STEER_CORE, CAPTURE_TEXT_BEFORE_0_2_3);
+  assert.ok(!T2_HOOK_STEER_CORE.includes('"'));
+  assert.ok(!CAPTURE_TEXT_BEFORE_0_2_3.includes(T2_HOOK_STEER_CORE));
 });
 
-test("T2-hook PASS on the steer recorded before plugin 0.2.3 and on the current full text; the recall text or other text stays INCONCLUSIVE", () => {
+test("T2-hook PASS on the current text as the hook's JSON stdout; the pre-0.2.3 wording, the recall text or other text stays INCONCLUSIVE", () => {
   const promptSaid = (context) => said("UserPromptSubmit", JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
   const verdictOn = (hooks) => VERDICTS[T2H]([turn([init(), ...hooks, assistantText(T2_OFFER), ok(T2_OFFER)])]);
-  for (const [label, context] of [["recorded before 0.2.3", CAPTURE_TEXT_BEFORE_0_2_3], ["current", CAPTURE_TEXT]]) {
-    const v = verdictOn(promptSaid(context));
-    assert.equal(v.verdict, "PASS", `${label}: ${v.notes.join(" ")}`);
-    assert.ok(v.notes.includes("UserPromptSubmit steer text: seen"), label);
+  {
+    const v = verdictOn(promptSaid(CAPTURE_TEXT));
+    assert.equal(v.verdict, "PASS", v.notes.join(" "));
+    assert.ok(v.notes.includes("UserPromptSubmit steer text: seen"));
   }
-  for (const context of [RECALL_TEXT, "something else", "call the capture tool only on a yes."]) {
+  for (const context of [CAPTURE_TEXT_BEFORE_0_2_3, RECALL_TEXT, "something else", "call the capture tool only on a yes."]) {
     const v = verdictOn(promptSaid(context));
     assert.equal(v.verdict, INCONCLUSIVE, context);
     assert.equal(v.notes[0], HOOK_STEER_NOT_SEEN_NOTE, context);
