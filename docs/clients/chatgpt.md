@@ -41,6 +41,12 @@ Nobody has run this sign-in against Quadron. No bearer token is added by hand.
 
 Quadron signs in with OAuth. The [authentication docs](https://developers.openai.com/apps-sdk/build/auth) currently describe an OAuth 2.1 authorization-code flow with PKCE. The [quickstart](https://developers.openai.com/plugins/quickstart) also shows a **No authentication** choice, which is not the one to use here.
 
+Nothing is registered on the server side before you connect. The [plugin authentication docs](https://developers.openai.com/plugins/build/auth), read 2026-11-13, say dynamic client registration is supported, and Quadron accepts it, so ChatGPT registers itself when you add the server. The redirect URI ChatGPT shows on the server's management page is for your information only.
+
+## Tool approval
+
+The [Apps SDK changelog](https://developers.openai.com/apps-sdk/changelog), read 2026-11-13, says in its entry of 12 June 2026 that ChatGPT users can choose when connected apps ask for permission: always, before making changes, or only before important changes, with personal accounts setting global and per-app preferences and workspace admins setting defaults. Check that setting for the Quadron server before you rely on a prompt. Where it sits on the screen is not stated on the pages read.
+
 ## The session hook
 
 The recall hook in [`cli/README.md`](../../cli/README.md) is Claude Code only. Quadron ships nothing for ChatGPT, and this page has no hook steps.
@@ -50,4 +56,8 @@ The recall hook in [`cli/README.md`](../../cli/README.md) is Claude Code only. Q
 
 ## Behaviour guidance
 
-Behaviour guidance reaches ChatGPT through the server's instructions, as far as ChatGPT uses them, which is not confirmed.
+Behaviour guidance reaches ChatGPT through the server's instructions. The [Apps SDK changelog](https://developers.openai.com/apps-sdk/changelog) entry of 26 May 2026, read 2026-11-13, says ChatGPT reads MCP server instructions returned during initialization, and the [MCP server docs](https://developers.openai.com/plugins/build/mcp-server) say to keep the most important details in the first 512 characters. How fully ChatGPT follows them is not confirmed.
+
+## Disconnect
+
+Remove the custom MCP server from the Plugins page. The [plugin docs](https://learn.chatgpt.com/docs/plugins), read 2026-11-05, say that uninstalling a plugin removes the plugin bundle and that separately connected MCP server integrations remain connected until you disconnect them there. Where the control for a custom server sits is not stated on the pages read.
