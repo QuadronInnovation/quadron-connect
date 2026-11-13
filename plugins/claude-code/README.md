@@ -1,9 +1,11 @@
 # Quadron plugin for Claude Code
 
 The behaviour half of the Quadron MCP connector for Claude Code: a skill that tells Claude
-when to read the person's Quadron record and what it may write to it. The transport half
-(registering the connector URL and signing in) stays with `claude mcp add` or
-`npx @quadron/connect`; the recall-at-session-start hook lives in `cli/` of this repository.
+when to read the person's Quadron record and what it may write to it, and three context-only
+hooks (SessionStart, UserPromptSubmit, PostToolUse) that repeat those rules as reminders. The
+transport half (registering the connector URL and signing in) stays with `claude mcp add` or
+`npx @quadron/connect`; the CLI's own SessionStart hook, which lists the person's projects,
+lives in `cli/` of this repository.
 
 ## Layout
 
@@ -29,14 +31,23 @@ claude plugin marketplace add QuadronInnovation/quadron-connect
 claude plugin install quadron@quadron-marketplace
 ```
 
-Then connect the record (local scope keeps the registration inside one project directory):
+Then connect the record. User scope matches `npx @quadron/connect`: the plugin's hooks run in
+every project, so the server is registered where they run.
 
 ```
-claude mcp add --transport http quadron --scope local https://mcp.quadron.tech/mcp
+claude mcp add --transport http quadron --scope user https://mcp.quadron.tech/mcp
 ```
 
-Sign in through `/mcp` inside Claude Code. The skill does nothing until a `quad_*` tool is
-present.
+Sign in through `/mcp` inside Claude Code. The hooks still add their reminders; with no
+`quad_*` tool the skill says Quadron is not connected.
+
+## Release
+
+`main` is the released line: an install from this repository follows its default branch. Every
+behaviour change bumps `version` in `.claude-plugin/plugin.json`, and each release gets the tag
+`plugin-v<version>` on its merge commit. Tags currently lag the version: the only tag is
+`plugin-v0.1.0`, while `main` is 0.2.3, until the next release run. For a fixed copy, add the
+marketplace with a release tag as its ref; updates then follow that ref.
 
 ## What is deliberately not here
 
@@ -80,7 +91,7 @@ Malformed or empty stdin, or an unexpected event, gives exit 0, no output and on
 - [Memory](https://code.claude.com/docs/en/memory): "Storage location"
 - [Permissions](https://code.claude.com/docs/en/permissions): "How path patterns match"
 
-**Measured live** (scripted Agent SDK sessions, plugin loaded from its directory, staging connector, Windows host, one attempt per row; see "Hook rows" under Verification):
+**Measured live** (scripted Agent SDK sessions, plugin loaded from its directory, staging connector, Windows host, one attempt per row; see "Hook rows" under Verification). Each result holds for the plugin version it names; 0.2.3 has no scripted hook result yet.
 
 - A plugin loaded from its directory loads its hooks in an Agent SDK session: the SessionStart reminder and the UserPromptSubmit capture steer were observed on 2026-11-10 with 0.2.1 and 0.2.2.
 - The PostToolUse handler without an `if` filter starts on a Write at an absolute Windows path: on 2026-11-10 with 0.2.2 for `CLAUDE.md`, and on 2026-11-11 with 0.2.2 for a memory file in the session's own memory directory. Versions up to 0.2.1 filtered with `if` path rules (`Edit(//**/CLAUDE.md)` and two more); with them no PostToolUse handler started for a Write of `CLAUDE.md` on Windows, though the script matched the same input when run by hand. 0.2.2 removed them.
@@ -135,7 +146,7 @@ The T-row results below come from the Claude Code CLI unless an entry says other
 
 ### Hook rows (plugin hooks, Agent SDK harness)
 
-Scripted Agent SDK sessions, plugin loaded from its directory, staging connector, Windows host, one attempt each; the rows are described in `test/journey/README.md`. The harness's row id T3b (the plugin's SessionStart reminder) is not the "T3b" inside the T3 cell above (the CLI hook's session behaviour).
+Scripted Agent SDK sessions, plugin loaded from its directory, staging connector, Windows host, one attempt each; the rows are described in `test/journey/README.md`. Each result holds for the plugin version it names. Plugin 0.2.3 has no scripted hook-row result yet, and T1-auto-memory-hook has none at any version. The harness's row id T3b (the plugin's SessionStart reminder) is not the "T3b" inside the T3 cell above (the CLI hook's session behaviour).
 
 | Id | Check | Result |
 |----|-------|--------|
@@ -148,7 +159,7 @@ Skill and MCP contract changes reviewed by the server owner at fd5f596; PR #1 ap
 
 ### Connector-only checks (claude.ai)
 
-The staging connector reached from claude.ai as a custom connector, with no plugin, skill or hook. The maintainer runs these by hand; no agent or script drives claude.ai. Evidence per row: a screenshot showing the claude.ai address, date and time, and the expanded raw tool input and result. T2 and the one-line offer wording (plugin skill) and T3 (CLI hook) have no connector equivalent. On claude.ai, capture on request is the launch requirement and a proactive offer is best-effort. In Claude Code, the design intent is that the skill text makes the offer a requirement; the hook carries statements, no rule. No T4 pass exists on the Agent SDK route. The plugin tag does not wait on these rows. T1-T6 and these rows both gate launch.
+The staging connector reached from claude.ai as a custom connector, with no plugin, skill or hook. The maintainer runs these by hand; no agent or script drives claude.ai. Evidence per row: a screenshot showing the claude.ai address, date and time, and the expanded raw tool input and result. T2 and the one-line offer wording (plugin skill) and T3 (CLI hook) have no connector equivalent. On claude.ai, capture on request is the launch requirement and a proactive offer is best-effort. In Claude Code, the design intent is that the skill text makes the offer a requirement; the plugin hooks repeat the rule as reminders; the CLI hook carries statements only. No T4 pass exists on the Agent SDK route. The plugin tag does not wait on these rows. T1-T6 and these rows both gate launch.
 
 Results below are from one hand run on 2026-11-04 (UTC). "Crop evidence" means a cropped screenshot that does not meet the full evidence rule above.
 
