@@ -2,9 +2,13 @@ name: validate
 on: [pull_request, push]
 permissions:
   contents: read
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,10 +17,15 @@ jobs:
         run: for f in .claude-plugin/marketplace.json plugins/claude-code/.claude-plugin/plugin.json cli/package.json; do node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" && echo "ok $f"; done
       - name: CLI tests
         run: cd cli && npm test
-      - name: Claude Code plugin validate
-        run: npx -y @anthropic-ai/claude-code plugin validate ./plugins/claude-code
+      # Pinned to the Claude Code version the gates are measured with locally; bump it on purpose, not by drift.
+      - name: Claude Code plugin validate (strict)
+        run: npx -y @anthropic-ai/claude-code@2.1.311 plugin validate --strict ./plugins/claude-code
+      # The marketplace manifest has no description yet, which --strict would turn into a failure.
+      - name: Claude Code marketplace validate
+        run: npx -y @anthropic-ai/claude-code@2.1.311 plugin validate .
   hooks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         node-version: ["20", "22"]
@@ -25,9 +34,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "${{ matrix.node-version }}" }
       - name: Plugin hook tests
-        run: node --test plugins/claude-code/hooks/test/memory-trigger.test.mjs plugins/claude-code/hooks/test/prompt-trigger.test.mjs plugins/claude-code/hooks/test/session-banner.test.mjs plugins/claude-code/hooks/test/hooks-json.test.mjs
+        run: node --test plugins/claude-code/hooks/test/*.test.mjs
   journey:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         node-version: ["20", "22"]
