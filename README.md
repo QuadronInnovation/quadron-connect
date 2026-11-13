@@ -7,7 +7,7 @@ Connect AI clients to your Quadron record over the Quadron MCP connector (`https
 | `plugins/claude-code/` | Claude Code plugin: a skill that says when to read your record and what may be written to it |
 | `.claude-plugin/marketplace.json` | Marketplace manifest, so the plugin installs straight from this repository |
 | `cli/` | `@quadron/connect`: signs a terminal in (device-code OAuth), registers the MCP server, installs the recall-at-session-start hook |
-| `docs/clients/` | Install notes for ChatGPT, Cursor and Codex: recipes from vendor docs, not yet run end to end |
+| `docs/clients/` | Install notes for ChatGPT, Cursor, Codex and Gemini: recipes from vendor docs, not yet run end to end |
 
 ## Install the Claude Code plugin
 
