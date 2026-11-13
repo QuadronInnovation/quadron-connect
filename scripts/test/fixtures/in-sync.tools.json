@@ -1,0 +1,9 @@
+{
+  "tools": [
+    { "name": "quad_context", "description": "Return the person's working frame on a topic." },
+    { "name": "quad_commit", "description": "When the person asks to save a note, save it with this tool to their Quadron record. Pass quad_name for a real project." },
+    { "name": "future_you_capture", "description": "When the person asks to save a note, save it with this tool\n  to their Quadron record. Use for judgments." },
+    { "name": "quad_create", "description": "Create a new project with a short plain name." },
+    { "name": "quad_apply_method", "description": "Run the person's method." }
+  ]
+}
