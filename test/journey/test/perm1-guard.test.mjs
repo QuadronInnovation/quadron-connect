@@ -14,8 +14,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { main } from "../lib/main.mjs";
-import { HOOK_ROW_NAMES } from "../lib/rows.mjs";
-import { box, fakeClient, liveEnv, init, result, toolUse, assistantText, CAPTURE, T2_OK, T4_OK, T5_OK } from "./helpers.mjs";
+import { AUTO_MEMORY_ROW_NAMES, HOOK_ROW_NAMES, ROWS, SESSION_ROW_NAMES } from "../lib/rows.mjs";
+import { box, fakeClient, liveEnv, init, result, toolUse, assistantText, CAPTURE, T2_OK, T4_OK, T5_OK, t6Ready } from "./helpers.mjs";
 
 const [, , T2H, T1M] = HOOK_ROW_NAMES;
 const OTHER_MODES = ["default", "bypassPermissions", "acceptEdits", "plan", "auto"];
@@ -47,6 +47,16 @@ test("PERM-1. every session the harness starts is dontAsk with no callback and n
   ]) {
     const b = box();
     const { client } = await run(b, b.argv(row), scripts);
+    noCallback(client, row);
+  }
+});
+
+test("PERM-1. every row the harness can run a session for starts dontAsk with no callback and no bypass flag", async () => {
+  const quiet = (sid) => [init({ session_id: sid }), assistantText("An answer."), result(0.1, { session_id: sid, result: "An answer." })];
+  for (const row of SESSION_ROW_NAMES) {
+    const b = box(row === "T6" ? { entries: t6Ready() } : {});
+    const extra = AUTO_MEMORY_ROW_NAMES.includes(row) ? ["--auto-memory-settings", b.autoMemorySettings] : [];
+    const { client } = await run(b, b.argv(row, {}, extra), ROWS[row].turns.map((_, i) => quiet(`s${i}`)));
     noCallback(client, row);
   }
 });

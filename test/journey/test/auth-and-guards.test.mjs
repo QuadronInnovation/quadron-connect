@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as nodefs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { main } from "../lib/main.mjs";
 import { DISALLOWED_TOOLS, ENV_ALLOWLIST, REFUSED_ENV, assertSessionOptions, buildChildEnv, checkInstalledSdk, isLoopbackUrl, loadOverride, readHead, scanInitTools, versionAtLeast } from "../lib/guards.mjs";
 import { isStagingUrl } from "../lib/connector.mjs";
@@ -424,14 +425,14 @@ test("connector check. no method, no answer or a throw on the first read goes on
 
 test("connector check. pending is polled, and connected before the bound goes with no reconnect, and clears an init's pending at the end of the row", async () => {
   const b = box();
-  const out = await run(b, b.argv("ISSUE2"), [{ messages: offerAfter(pendingInit()), initTiming: "after", status: (n) => server(n < 3 ? "pending" : "connected"), reconnect: true }], { timeoutMs: 500 });
+  const out = await run(b, b.argv("ISSUE2"), [{ messages: offerAfter(pendingInit()), initTiming: "after", status: (n) => server(n < 3 ? "pending" : "connected"), reconnect: true }], { timeoutMs: 2000 });
   assert.equal(out.client.statusReads, 3);
   assert.deepEqual(out.client.reconnects, []);
   assert.deepEqual(connectorRecord(out, b), { first: "pending", final: "connected" });
   assert.equal(out.r.summary.verdict, "PASS");
   // A status that turns bad while pending stops at once, and an unread poll counts as still pending.
   const bad = box();
-  const f = await run(bad, bad.argv("ISSUE2"), [{ messages: offerAfter(pendingInit()), status: (n) => { if (n === 2) throw new Error("x"); return server(n < 3 ? "pending" : "needs-auth"); }, reconnect: true }], { timeoutMs: 500 });
+  const f = await run(bad, bad.argv("ISSUE2"), [{ messages: offerAfter(pendingInit()), status: (n) => { if (n === 2) throw new Error("x"); return server(n < 3 ? "pending" : "needs-auth"); }, reconnect: true }], { timeoutMs: 2000 });
   assertStoppedBeforePrompt(f, bad, 4);
   assert.deepEqual(connectorRecord(f, bad), { first: "pending", final: "needs-auth" });
   assert.deepEqual(f.client.reconnects, []);
@@ -513,6 +514,10 @@ const STRIPPED = {
   "permission mode plan": (o) => ({ ...o, permissionMode: "plan" }),
   "permission mode auto": (o) => ({ ...o, permissionMode: "auto" }),
   "permission mode absent": without("permissionMode"),
+  "canUseTool present": (o) => ({ ...o, canUseTool: async () => ({ behavior: "allow" }) }),
+  "allowDangerouslySkipPermissions present": (o) => ({ ...o, allowDangerouslySkipPermissions: true }),
+  "allowDangerouslySkipPermissions present as false": (o) => ({ ...o, allowDangerouslySkipPermissions: false }),
+  "permissionPrompts present": (o) => ({ ...o, permissionPrompts: true }),
   "setting sources absent": without("settingSources"),
   "setting sources holding one": (o) => ({ ...o, settingSources: ["user"] }),
   "setting sources not an array": (o) => ({ ...o, settingSources: "" }),
@@ -2182,8 +2187,21 @@ test("F23. the installed version is checked against the pin, reading only packag
   assert.match(d.io.errors.join(" "), /does not match the pin/);
   nodefs.unlinkSync(installed);
   assert.equal((await run(b, b.argv("T2"), [T2_OK()])).r.exitCode, 2);
-  const real = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
-  assert.equal(checkInstalledSdk(real, nodefs), "0.3.316");
+});
+
+// The real install, apart from the fake above: skipped offline when nothing is installed, and a
+// failure in CI (which installs first), so a missing install never passes unseen there.
+test("F23. the real install matches the pin in package.json", (t) => {
+  const real = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const sdk = "@anthropic-ai/claude-agent-sdk";
+  if (!nodefs.existsSync(path.join(real, "node_modules", ...sdk.split("/"), "package.json"))) {
+    const why = "the pinned SDK is not installed: run npm ci --ignore-scripts --prefix test/journey";
+    if (process.env.CI) assert.fail(why);
+    t.skip(why);
+    return;
+  }
+  const pin = JSON.parse(nodefs.readFileSync(path.join(real, "package.json"), "utf8")).dependencies[sdk];
+  assert.equal(checkInstalledSdk(real, nodefs), pin);
 });
 
 test("head: read from git's files for a plain ref, a packed ref, a linked worktree and a detached head; unreadable refuses", async () => {

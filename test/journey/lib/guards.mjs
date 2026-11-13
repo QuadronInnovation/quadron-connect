@@ -199,6 +199,8 @@ export function checkSettingsDenyOnly(settings, { autoMemory = false } = {}) {
 // reserved. No flag, override or environment name reaches this: it reads the options and nothing else.
 function sessionOptionFault(o) {
   if (o?.permissionMode !== "dontAsk") return "permissionMode must be dontAsk";
+  // Present at all, with any value, is a fault: no callback can approve, and no bypass flag is sent.
+  for (const k of ["canUseTool", "allowDangerouslySkipPermissions", "permissionPrompts"]) if (k in Object(o)) return `${k} must be absent`;
   if (!Array.isArray(o?.settingSources) || o.settingSources.length !== 0) return "settingSources must be an empty array";
   if (o?.strictMcpConfig !== true) return "strictMcpConfig must be true";
   if (typeof o?.settings !== "string" || !o.settings) return "settings must be a non-empty string";
