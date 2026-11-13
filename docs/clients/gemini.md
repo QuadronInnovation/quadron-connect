@@ -17,15 +17,36 @@ Check your plan and account. The pages read name availability limits for the Gem
 
 The [Gemini CLI transition post](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) on Google's developer blog, read 2026-11-13, says that on 18 June 2026 Gemini CLI stopped serving requests for Google AI Pro and Ultra subscribers and for free individual use, that access through paid Gemini Code Assist licences is unchanged, and that the CLI remains reachable with paid API keys. So for a personal Google account the terminal path is Antigravity, and the Gemini CLI section below is for organization licences.
 
-## Get the URL
+## Get the URL or the settings
 
-There is no `config gemini` command yet. The connector URL the [repository README](../../README.md) names is:
+```
+quadron-connect config gemini
+quadron-connect config antigravity
+```
+
+Each only prints. It writes nothing. Keep the `config` argument: the bare command runs install, which signs in and writes `~/.claude/settings.json`.
+
+These two clients are new. If your installed version reports an unknown client, run from a clone of this repository: `node cli/bin/cli.js config gemini`. The same warning applies: without `config`, that command runs install.
+
+With the connector URL the [repository README](../../README.md) names, `config gemini` prints the URL to type into the Gemini app:
 
 ```
 https://mcp.quadron.tech/mcp
 ```
 
-Enter it by hand as described below. If a later release adds `quadron-connect config gemini`, it will only print this URL or the settings snippet for Antigravity; it will write nothing. Keep the `config` argument when you use it: the bare command runs install, which signs in and writes `~/.claude/settings.json`.
+and `config antigravity` prints the settings for Antigravity's file (the Gemini CLI form below is typed by hand):
+
+```json
+{
+  "mcpServers": {
+    "quadron": {
+      "serverUrl": "https://mcp.quadron.tech/mcp"
+    }
+  }
+}
+```
+
+The screen also shows a `targets:` line for Antigravity, and a warning if your copy is pointed away from production. Neither is part of the output.
 
 ## Where the URL goes
 
