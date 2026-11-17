@@ -86,10 +86,10 @@ Quadron saves text the person approves. The record is theirs, in their words.
 - Pass `quad_name` whenever the material belongs to a real project; omit it only for a
   genuine unmatched scrap.
 - Pass `question` with the question the capture answers, so the capture carries its why.
-- Say something is saved only when the tool reports a completed save. A reply such as
-  "Saved for your review" is pending, not kept: say Quadron received it for their review,
-  never that it is saved to their record. On an unclear result, check
-  `quad_judgment_status` if it is listed; never retry with a new event.
+- After a capture, tell the person Quadron received it for their review; say it is saved
+  to their record only when the tool reports a completed save. A reply such as "Saved for
+  your review" is pending, not kept. On an unclear `quad_submit_judgment` result, check
+  `quad_judgment_status` if it is listed; never submit again under a new event.
 - When the person starts or scopes a new line of work with no matching project, offer
   `quad_create` with a short plain name, and call it only after they say yes to that
   project. Do not create projects on your own.
@@ -101,12 +101,13 @@ Quadron saves text the person approves. The record is theirs, in their words.
 
 `quad_apply_method` appears only where the server turns it on, and follows the capture
 rule: run the person's method only after they say yes, in words, in this conversation, to
-running it now. It is owner-only. It records the run and earns nothing, so never describe
-running it as earning anything.
+running it now; a request such as "apply my pricing method to my Acme project" is that
+yes. It is owner-only. It records the run and earns nothing, so never describe running it
+as earning anything.
 
-Tools beyond the ones named above appear only where the server turns them on, for example
-`quad_share_prepare`, judgment intake (`quad_submit_judgment`, `quad_judgment_status`) and
-memory import (`quad_prepare_memory_import`, `quad_preview_memory_import`,
-`quad_memory_import_status`). Use them when the person asks for what they do. Any of them
-that writes to the record (judgment intake, memory import) follows the capture rule above;
-the rest need no extra rule.
+Some tools appear only where the server turns them on, for example `quad_share_prepare`,
+judgment intake (`quad_submit_judgment`, `quad_judgment_status`) and memory import
+(`quad_prepare_memory_import`, `quad_preview_memory_import`, `quad_memory_import_status`).
+Use them when the person asks for what they do. Judgment intake follows the capture rule
+above. Memory import previews first and prepares only the items the person selects; their
+Claude memory is never consent. The rest need no extra rule.
