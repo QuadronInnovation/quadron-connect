@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   decide, run, RECALL_PHRASES, CAPTURE_PHRASES, RECALL_TEXT, CAPTURE_TEXT,
 } from '../scripts/prompt-trigger.mjs';
+import { CAPTURE_RULE } from '../scripts/capture-rule.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/prompt-trigger.mjs', import.meta.url));
 
@@ -40,7 +41,9 @@ test('capture phrases accept a curly apostrophe', () => {
 
 test('the capture line keeps offer-then-yes and treats an explicit save request as the yes', () => {
   assert.equal(CAPTURE_TEXT,
-    'Quadron: the person may have just stated a judgment. If so, offer once in one line to keep it in Quadron, quoting their words; call the capture tool only on a yes. An explicit request in this conversation to save or keep that specific thing is the yes: save it with no separate offer.');
+    `Quadron: the person may have just stated a judgment or asked to keep something. ${CAPTURE_RULE}`);
+  assert.equal(RECALL_TEXT,
+    'Quadron: the person is reaching back to their prior work. Unless the session already lists what they ask for, call quad_context (with the topic, if there is one) or quad_recall within a named project before answering.');
   assert.equal(context(decide(ev('Save this to Quadron: we ship on Fridays only.'))), CAPTURE_TEXT);
 });
 

@@ -722,7 +722,8 @@ export function verdictT3b([a]) {
 }
 
 // T2-hook: a UserPromptSubmit hook event whose recorded text holds the prompt trigger's capture steer
-// (its core, T2_HOOK_STEER_CORE, so output recorded before plugin 0.2.3 still reads), an offer at the
+// (its core, T2_HOOK_STEER_CORE, which holds no double quote, so the hook's JSON stdout carries it
+// unescaped; output recorded before this wording lacks the core and reads INCONCLUSIVE), an offer at the
 // stated phrase, and no capture of any kind. An event without the steer text is INCONCLUSIVE, never a pass.
 export function verdictT2Hook([a]) {
   const f = [];
@@ -917,7 +918,7 @@ export function verdictT1AutoMemoryHook([a, b], { cwd, configDir, filesWrittenAl
     `memory files written by a file tool in turn 1: ${t1.saves.length ? t1.saves.map((u) => `${u.name} ${t1.base(u)}`).join("; ") : "none"}`,
     `memory directory changes on disk after turn 1: ${inside.length ? inside.join(", ") : "none"}`,
     `PostToolUse after the save: hook_started ${started ? "seen" : "not seen"}, memory steer in a hook_response ${steered ? "seen" : "not seen"}`,
-    `UserPromptSubmit capture reminder: ${steerSeen(a, T2_HOOK_STEER, { event: "UserPromptSubmit" }) ? "seen" : "not seen"} (never counted as the memory steer)`,
+    `UserPromptSubmit capture reminder: ${steerSeen(a, T2_HOOK_STEER_CORE, { event: "UserPromptSubmit" }) ? "seen" : "not seen"} (never counted as the memory steer)`,
     `turn 1 offered at the stated phrase: ${offered ? "yes" : "no"}`,
     OFFER_HEURISTIC_NOTE,
   ];

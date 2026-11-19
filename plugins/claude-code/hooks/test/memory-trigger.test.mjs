@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   decide as decideIn, run as runIn, excerpt, classifyPath, normalisePath, usableConfigDir,
 } from '../scripts/memory-trigger.mjs';
+import { CAPTURE_RULE } from '../scripts/capture-rule.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/memory-trigger.mjs', import.meta.url));
 // The runner's own CLAUDE_CONFIG_DIR must not leak into the cases; each passes its env.
@@ -66,7 +67,7 @@ test('CLAUDE.md and CLAUDE.local.md use the instructions-file wording', () => {
 test('exact context text', () => {
   const ctx = context(decide(write('/home/u/.claude/projects/-x/memory/a.md', 'Body')));
   assert.equal(ctx,
-    'Quadron: you just saved a memory: "Body". If it records the person\'s own decision, standard or preference, offer once in one line to keep it in their Quadron record, quoting their words; call future_you_capture (or quad_commit if that is not listed) only on a yes. If it is your own note, do nothing.');
+    `Quadron: you just saved a memory: "Body". If it records the person's own decision, standard or preference, it may belong in their Quadron record. ${CAPTURE_RULE} If it is your own note, do nothing.`);
 });
 
 test('non-matches produce nothing', () => {

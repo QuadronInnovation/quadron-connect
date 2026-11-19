@@ -4,12 +4,13 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { BANNER } from '../scripts/session-banner.mjs';
+import { CAPTURE_RULE } from '../scripts/capture-rule.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/session-banner.mjs', import.meta.url));
 const SKILL = fileURLToPath(new URL('../../skills/quadron/SKILL.md', import.meta.url));
 const SKILL_SENTENCE = 'Quadron is connected, and this person keeps a record of their own expertise in it.';
 const EXPECTED =
-  'Quadron hooks are active. When the person reaches back to their prior work, call quad_context (or quad_recall inside a project) before answering; when they state a decision, standard or preference, offer once in one line to keep it in Quadron and call the capture tool only on their yes.';
+  `Quadron hooks are active. If quad_* tools are present: when the person reaches back to their prior work, call quad_context with the topic (or quad_recall inside a project) before answering, unless the session already lists what they ask for. When they state a decision, standard or preference: ${CAPTURE_RULE}`;
 
 test('BANNER is the agreed reminder line', () => {
   assert.equal(BANNER, EXPECTED);

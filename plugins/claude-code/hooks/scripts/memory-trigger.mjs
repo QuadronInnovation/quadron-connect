@@ -5,6 +5,7 @@
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
+import { CAPTURE_RULE } from './capture-rule.mjs';
 
 export const EXCERPT_MAX = 200;
 
@@ -41,7 +42,7 @@ function memoryRoots(p) {
   return roots;
 }
 
-// The hooks.json filter matches projects/*/memory/** anywhere, so this is the narrowing step.
+// hooks.json has no path filter (removed in 0.2.2); this function does all the narrowing.
 // <root> must be the config directory wherever that is known: equal to CLAUDE_CONFIG_DIR when
 // set, and the parent of the `projects` directory holding transcript_path when that has one
 // (any project there: memory is keyed by the git root, the transcript by the cwd). Each known
@@ -108,7 +109,7 @@ export function contextText(kind, ex) {
   const what = kind === 'instructions'
     ? 'you just updated their instructions file'
     : 'you just saved a memory';
-  return `Quadron: ${what}: "${ex}". If it records the person's own decision, standard or preference, offer once in one line to keep it in their Quadron record, quoting their words; call future_you_capture (or quad_commit if that is not listed) only on a yes. If it is your own note, do nothing.`;
+  return `Quadron: ${what}: "${ex}". If it records the person's own decision, standard or preference, it may belong in their Quadron record. ${CAPTURE_RULE} If it is your own note, do nothing.`;
 }
 
 const silent = () => ({ stdout: '', stderr: '', exitCode: 0 });
