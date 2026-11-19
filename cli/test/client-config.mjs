@@ -15,11 +15,16 @@ const golden = (name) => readFileSync(new URL(`fixtures/client-config/${name}`, 
 let passed = 0;
 const check = (fn) => { fn(); passed += 1; };
 
-check(() => assert.deepEqual(CLIENTS, ["cursor", "codex", "chatgpt"]));
+check(() => assert.deepEqual(CLIENTS, ["cursor", "codex", "chatgpt", "gemini", "antigravity"]));
 check(() => assert.equal(render("cursor", BASE).text, golden("cursor.mcp.json")));
 check(() => assert.equal(JSON.parse(render("cursor", BASE).text).mcpServers.quadron.url, BASE));
 check(() => assert.equal(render("codex", BASE).text, golden("codex.config.toml")));
 check(() => assert.equal(render("chatgpt", BASE).text, golden("chatgpt.url.txt")));
+check(() => assert.equal(render("gemini", BASE).text, golden("gemini.url.txt")));
+check(() => assert.deepEqual(render("gemini", BASE).targets, []));
+check(() => assert.equal(render("antigravity", BASE).text, golden("antigravity.mcp_config.json")));
+check(() => assert.equal(JSON.parse(render("antigravity", BASE).text).mcpServers.quadron.serverUrl, BASE));
+check(() => assert.deepEqual(render("antigravity", BASE).targets, ["~/.gemini/config/mcp_config.json"]));
 for (const bad of ["http://mcp.example.test/mcp", "https://u:p@mcp.example.test/mcp",
                    "https://mcp.example.test/mcp?x=1", "https://mcp.example.test/mcp#f"]) {
   check(() => assert.throws(() => render("cursor", bad), /must be HTTPS/));
@@ -42,10 +47,11 @@ const cli = (args, mcpUrl = BASE) => spawnSync(process.execPath, [join(CLI_DIR, 
   encoding: "utf8",
   env: { ...baseEnv, HOME: home, USERPROFILE: home, ...(mcpUrl ? { QUADRON_MCP_URL: mcpUrl } : {}) },
 });
-const USAGE = /usage: quadron-connect config <cursor, codex or chatgpt>/;
+const USAGE = /usage: quadron-connect config <cursor, codex, chatgpt, gemini or antigravity>/;
 
 try {
-  for (const [client, file] of [["cursor", "cursor.mcp.json"], ["codex", "codex.config.toml"], ["chatgpt", "chatgpt.url.txt"]]) {
+  for (const [client, file] of [["cursor", "cursor.mcp.json"], ["codex", "codex.config.toml"], ["chatgpt", "chatgpt.url.txt"],
+                                ["gemini", "gemini.url.txt"], ["antigravity", "antigravity.mcp_config.json"]]) {
     const r = cli(["config", client]);
     check(() => assert.equal(r.status, 0, r.stderr));
     check(() => assert.equal(r.stdout, golden(file)));
@@ -53,6 +59,8 @@ try {
   }
   check(() => assert.match(cli(["config", "cursor"]).stderr, /targets: ~\/\.cursor\/mcp\.json, \.cursor\/mcp\.json/));
   check(() => assert.match(cli(["config", "codex"]).stderr, /targets: ~\/\.codex\/config\.toml, \.codex\/config\.toml/));
+  check(() => assert.match(cli(["config", "antigravity"]).stderr, /targets: ~\/\.gemini\/config\/mcp_config\.json/));
+  check(() => assert.doesNotMatch(cli(["config", "gemini"]).stderr, /targets:/));
   // Negative control: on the default URL the warning stays away, so the match above can fail.
   check(() => assert.doesNotMatch(cli(["config", "cursor"], null).stderr, /non-production/));
   const prod = cli(["config", "cursor"], null);
