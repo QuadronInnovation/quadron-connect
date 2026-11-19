@@ -8,6 +8,11 @@
 
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+const parentHome = mkdtempSync(join(tmpdir(), "qc-parent-"));
+process.env.HOME = parentHome;
+process.env.USERPROFILE = parentHome;
+// Guard: the in-process requires below read the home, so it must be ours before they load.
+if (homedir() !== parentHome) { console.log(`FAIL: home is ${homedir()}, not the test's ${parentHome}`); process.exit(1); }
 const settings = require("../lib/settings.js");
 const sessionStart = require("../hooks/session-start.js");
 
@@ -78,7 +83,7 @@ check(bad.ok === true && bad.existed === false, "a missing settings file is fine
 
 // The command must be absolute and marked, so it resolves from any cwd and is findable later.
 const cmd = r1.data.hooks.SessionStart[1].hooks[0].command;
-check(cmd.includes(HOOKS), "the hook command uses an absolute path");
+check(cmd.includes(join(HOOKS, "session-start.js")), "the hook command uses an absolute path");
 check(cmd.includes(settings.MARKER) || HOOKS.includes(settings.MARKER),
       "our hooks are identifiable by marker rather than by position");
 
@@ -138,17 +143,18 @@ check(sessionStart.render([{ name: "" }, { name: "   " }]) === "",
 //   session start, in silence, because a hook that cannot reach anything must say nothing. These
 //   run auth.js in a throwaway HOME with the env explicitly cleared: the hook's actual situation.
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const AUTH = new URL("../lib/auth.js", import.meta.url).pathname;
+const AUTH = fileURLToPath(new URL("../lib/auth.js", import.meta.url));
 
 // A fresh process per case: auth.js resolves its endpoints once, at module load.
 function resolveIn(home, env = {}) {
   const out = execFileSync(process.execPath,
-    ["-e", `const a=require(${JSON.stringify(AUTH)});process.stdout.write(JSON.stringify({i:a.ISSUER,m:a.MCP_URL,d:a.DEFAULTS.issuer}))`],
-    { env: { PATH: process.env.PATH, HOME: home, ...env }, encoding: "utf8" });
+    ["-e", `if(require("os").homedir()!==${JSON.stringify(home)}){console.error("FAIL: home is "+require("os").homedir());process.exit(1)}const a=require(${JSON.stringify(AUTH)});if(a.HOME!==require("path").join(${JSON.stringify(home)},".quadron")){console.error("FAIL: auth home is "+a.HOME);process.exit(1)}process.stdout.write(JSON.stringify({i:a.ISSUER,m:a.MCP_URL,d:a.DEFAULTS.issuer}))`],
+    { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ...env }, encoding: "utf8" });
   return JSON.parse(out);
 }
 
@@ -182,5 +188,6 @@ check(auth.stampedIssuer({}) === auth.DEFAULTS.issuer,
 check(auth.stampedIssuer(null) === auth.DEFAULTS.issuer, "a missing credential does not throw");
 
 rmSync(home, { recursive: true, force: true });
+rmSync(parentHome, { recursive: true, force: true });
 
 console.log(`OK — ${passed} assertions passed`);

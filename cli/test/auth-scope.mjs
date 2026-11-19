@@ -3,11 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 const home = mkdtempSync(join(tmpdir(), 'connect-scope-'));
 try {
- const source = new URL('../lib/auth.js', import.meta.url).pathname;
+ const source = fileURLToPath(new URL('../lib/auth.js', import.meta.url));
  execFileSync(process.execPath, ['-e', `
-const assert=require('node:assert/strict');const a=require(${JSON.stringify(source)});
+const assert=require('node:assert/strict');if(require('os').homedir()!==${JSON.stringify(home)}){console.error('FAIL: home is '+require('os').homedir());process.exit(1)}const a=require(${JSON.stringify(source)});
+if(a.HOME!==require('node:path').join(${JSON.stringify(home)},'.quadron')){console.error('FAIL: auth home is '+a.HOME);process.exit(1)}
 (async()=>{
  const calls=[];global.fetch=async(url,opts={})=>{calls.push([url,opts]);if(url.includes('well-known'))return {ok:true,json:async()=>({registration_endpoint:'https://fixture/register',device_authorization_endpoint:'https://fixture/device'})};if(url.endsWith('register'))return {ok:true,json:async()=>({client_id:'new-client'})};return {ok:true,json:async()=>({device_code:'fixture'})};};
  const old={client_id:'old-client',issuer:a.ISSUER};a.save(a.CLIENT,old);
@@ -24,13 +26,13 @@ const assert=require('node:assert/strict');const a=require(${JSON.stringify(sour
  assert.equal(a.isLinked(),true);assert.equal(await a.accessToken(),'scoped');
  a.save(a.CREDS,{issuer:'https://other',scope:a.SCOPE,scope_version:1,refresh_token:'fixture'});assert.equal(await a.accessToken(),null);
 })().catch(e=>{console.error(e);process.exitCode=1});
-`], {env:{PATH:process.env.PATH,HOME:home},timeout:5000,stdio:'pipe'});
+`], {env:{PATH:process.env.PATH,HOME:home,USERPROFILE:home},timeout:5000,stdio:'pipe'});
  const configDir = join(home, '.quadron');
  writeFileSync(join(configDir, 'credentials.json'), JSON.stringify({issuer:'https://app.quadron.tech/auth/realms/quadron',scope:'openid quadron-mcp',scope_version:1,refresh_token:'fixture',access_token:'fixture',obtained_at:Date.now(),expires_in:300}));
  const preload = join(home, 'hung-fetch.js');
- writeFileSync(preload, 'global.fetch=()=>new Promise(()=>{});');
+ writeFileSync(preload, `if(require('os').homedir()!==${JSON.stringify(home)}){console.error('FAIL: home is '+require('os').homedir());process.exit(1)}global.fetch=()=>new Promise(()=>{});`);
  const started = Date.now();
- const output = execFileSync(process.execPath, ['--require',preload,new URL('../hooks/session-start.js',import.meta.url).pathname], {env:{PATH:process.env.PATH,HOME:home},input:'',timeout:3500,encoding:'utf8'});
+ const output = execFileSync(process.execPath, ['--require',preload,fileURLToPath(new URL('../hooks/session-start.js',import.meta.url))], {env:{PATH:process.env.PATH,HOME:home,USERPROFILE:home},input:'',timeout:3500,encoding:'utf8'});
  assert.equal(output,'');assert.ok(Date.now()-started<3000);
  assert.ok(true);
  console.log('Scoped registration migration, custody preservation, redirect/timeout and issuer isolation PASS');
