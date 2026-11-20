@@ -203,7 +203,7 @@ test("late init. no init at all: a stream that ends with no message is a load fa
   assert.match(empty.r.summary.stoppedBecause, /no init message/);
   assert.equal(empty.r.summary.turns[0].costAfterInterrupt, null);
   const h = box();
-  const hung = await run(h, h.argv("T2", {}, ["--row-timeout-seconds", "0.05"]), [{ messages: [], hang: true }], { timeoutMs: 10 });
+  const hung = await run(h, h.argv("T2", {}, ["--row-timeout-seconds", "0.5"]), [{ messages: [], hang: true }], { timeoutMs: 10 });
   assert.equal(hung.r.exitCode, 3);
   assert.equal(hung.client.interrupted, 1);
   assert.match(hung.r.summary.stoppedBecause, /row timeout/);
