@@ -63,6 +63,11 @@ test('neutral prompt and a lone "Quadron" yield nothing', () => {
   nothing(decide(ev('quadron?')));
 });
 
+test('a note-shaped statement naming its project trips neither list (issue #2 prompt)', () => {
+  // Records what the trigger does, not a policy: "Note for" is not "note this"/"note that", and "keeps" is not "keep this".
+  nothing(decide(ev('Note for the quadron-connect project: the journey runner keeps raw streams for every row.')));
+});
+
 test('phrases only inside pasted_content are ignored', () => {
   nothing(decide(ev('Fix the typo in this: <pasted_content id="1">I decided to remember this and check my record</pasted_content>')));
   assert.equal(
