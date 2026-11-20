@@ -14,7 +14,8 @@
 //
 // The dump may be the tools/list result ({"tools":[...]}) or the JSON-RPC response around it
 // ({"result":{"tools":[...]}}). The instructions file may be plain text, or JSON holding
-// "instructions" or "result.instructions" (an initialize response).
+// "instructions" or "result.instructions" (an initialize response). JSON with neither as a string
+// is bad input: the sentence is never searched for outside the instructions.
 // Whitespace runs are collapsed before comparing. Tools not named in --tools are ignored.
 //
 // Prints one OK or DRIFT row per check. Exit codes: 0 all OK; 1 drift; 2 bad input.
@@ -29,12 +30,11 @@ export function toolsFrom(dump) {
 }
 
 export function instructionsFrom(raw) {
-  try {
-    const j = JSON.parse(raw);
-    const s = typeof j === "string" ? j : j?.result?.instructions ?? j?.instructions;
-    if (typeof s === "string") return s;
-  } catch { /* plain text */ }
-  return raw;
+  let j;
+  try { j = JSON.parse(raw); } catch { return raw; /* plain text */ }
+  const s = typeof j === "string" ? j : j?.result?.instructions ?? j?.instructions;
+  if (typeof s !== "string") throw new Error('instructions file is JSON but holds no string "instructions" or "result.instructions"');
+  return s;
 }
 
 // Returns rows [{ status: "OK"|"DRIFT", subject, detail }].
@@ -70,6 +70,7 @@ function main(argv) {
   }
   if (!dumpPath) { console.error("usage: node scripts/routing-drift.mjs <tools-list.json> [--tools a,b] [--expect-instructions <file>]"); return 2; }
   if (saveTools.length === 0 || (instructionsPath !== null && instructionsPath === undefined)) { console.error("empty --tools or missing --expect-instructions path"); return 2; }
+  if (snapshotPath === undefined) { console.error("missing path after --snapshot"); return 2; }
   let rows;
   try {
     const snap = readSnapshot(snapshotPath);

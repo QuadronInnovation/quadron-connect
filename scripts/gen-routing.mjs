@@ -27,9 +27,9 @@ export function generate(skillText, snap) {
   const e = skillText.split(END).length - 1;
   if (b !== 1 || e !== 1) throw new Error(`expected exactly one BEGIN and one END marker, found ${b} and ${e}`);
   const start = skillText.indexOf(BEGIN);
-  const stop = skillText.indexOf(END) + END.length;
-  if (stop < start) throw new Error("END marker comes before BEGIN marker");
-  return skillText.slice(0, start) + renderBlock(snap) + skillText.slice(stop);
+  const end = skillText.indexOf(END);
+  if (end < start) throw new Error("END marker comes before BEGIN marker");
+  return skillText.slice(0, start) + renderBlock(snap) + skillText.slice(end + END.length);
 }
 
 function main(argv) {
@@ -43,6 +43,7 @@ function main(argv) {
     else if (a === "--skill") skillPath = argv[++i];
     else { console.error(`unknown argument: ${a}`); return 2; }
   }
+  if (snapshotPath === undefined) { console.error("missing path after --snapshot"); return 2; }
   let current, next;
   try {
     const snap = readSnapshot(snapshotPath);

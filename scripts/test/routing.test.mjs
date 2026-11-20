@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { CAPTURE_RE } from "../../test/journey/lib/rows.mjs";
 import { SAVE_TOOLS, readSnapshot } from "../lib/routing.mjs";
 import { BEGIN, END, generate, renderBlock } from "../gen-routing.mjs";
+import { instructionsFrom } from "../routing-drift.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fx = (name) => join(here, "fixtures", name);
@@ -67,6 +68,24 @@ test("drift: bad input -> exit 2", () => {
   assert.equal(drift(fx("instructions-without.txt")).status, 2);
 });
 
+test("drift: --expect-instructions JSON with no string instructions field -> exit 2, even when the text sits elsewhere in the document", () => {
+  const r = drift(fx("in-sync.tools.json"), "--expect-instructions", fx("instructions-outside.initialize.json"));
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /holds no string "instructions"/);
+  assert.doesNotMatch(r.stdout, /instructions/);
+  assert.throws(() => instructionsFrom(JSON.stringify({ result: { instructions: 7 } })), /holds no string "instructions"/);
+  assert.equal(instructionsFrom("plain text"), "plain text");
+});
+
+test("drift and gen: --snapshot with no path after it -> exit 2, never the default snapshot", () => {
+  const d = run("routing-drift.mjs", [fx("in-sync.tools.json"), "--snapshot"]);
+  assert.equal(d.status, 2, d.stdout + d.stderr);
+  assert.match(d.stderr, /missing path after --snapshot/);
+  const g = run("gen-routing.mjs", ["--check", "--snapshot"]);
+  assert.equal(g.status, 2, g.stdout + g.stderr);
+  assert.match(g.stderr, /missing path after --snapshot/);
+});
+
 test("drift: default save tools are exactly quad_commit and future_you_capture, and match CAPTURE_RE", () => {
   assert.deepEqual([...SAVE_TOOLS].sort(), ["future_you_capture", "quad_commit"]);
   for (const t of SAVE_TOOLS) assert.match(t, CAPTURE_RE);
@@ -101,6 +120,12 @@ test("gen: missing or duplicated markers are rejected", () => {
   const snap = readSnapshot(fx("snapshot.json"));
   assert.throws(() => generate("no markers", snap), /exactly one/);
   assert.throws(() => generate(`${BEGIN}\n${END}\n${BEGIN}\n${END}`, snap), /exactly one/);
+});
+
+test("gen: END before BEGIN is rejected, adjacent or apart", () => {
+  const snap = readSnapshot(fx("snapshot.json"));
+  assert.throws(() => generate(`${END}${BEGIN}`, snap), /END marker comes before BEGIN/);
+  assert.throws(() => generate(`intro\n${END}\ntext\n${BEGIN}\n`, snap), /END marker comes before BEGIN/);
 });
 
 test("snapshot: a sha256 that does not match the text, or a missing field, is rejected", () => {
