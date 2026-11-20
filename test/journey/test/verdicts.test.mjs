@@ -420,8 +420,23 @@ test("F19. T6 --routing-blocked: a missing citation is BLOCKED-BY-BACKEND with t
 
 // ---- ISSUE2
 test("F20. ISSUE2 PASS: offer text with the note's phrase, in the assistant text, and no capture", () => {
-  assert.equal(verdictIssue2([rec(init(), ...said("Keep that the runner keeps raw streams?"))]).verdict, "PASS");
-  assert.equal(verdictIssue2([rec(init(), assistantText("It keeps RAW STREAMS, keep it?"), ok("ok"))]).verdict, "PASS");
+  assert.equal(verdictIssue2([rec(init(), ...said("Keep that in quadron-connect: the runner keeps raw streams?"))]).verdict, "PASS");
+  assert.equal(verdictIssue2([rec(init(), assistantText("It keeps RAW STREAMS, keep it in quadron-connect?"), ok("ok"))]).verdict, "PASS");
+});
+test("F20. ISSUE2's offer names the project, as the offer rows' must: without it the row fails with their reason, with it the row passes", () => {
+  const NOT_NAMED = /the offer does not name the project \("quadron-connect"\) in its sentence or the one before or after it/;
+  for (const text of ["Keep this: the runner keeps raw streams?", "This is about quadron-connect. Understood. Keep this: the runner keeps raw streams?"]) {
+    const v = verdictIssue2([rec(init(), ...said(text))]);
+    assert.equal(v.verdict, "FAIL", text);
+    assert.match(v.notes.join(" "), NOT_NAMED, text);
+    assert.doesNotMatch(v.notes.join(" "), /note's phrase/, text);
+  }
+  for (const text of ["Keep this in quadron-connect: the runner keeps raw streams?", "This is for quadron-connect. Keep this: the runner keeps raw streams?"]) {
+    assert.equal(verdictIssue2([rec(init(), ...said(text))]).verdict, "PASS", text);
+  }
+  const none = verdictIssue2([rec(init(), ...said("The runner keeps raw streams. Anything else?"))]);
+  assert.match(none.notes.join(" "), /no offer with the note's phrase/);
+  assert.doesNotMatch(none.notes.join(" "), /does not name the project/); // no offer: the existing reason alone
 });
 test("F20. ISSUE2 FAIL: no phrase, naming only the project, a capture attempt, the turn cap, an error result", () => {
   for (const [s, re] of [
@@ -452,7 +467,7 @@ test("F27. quad_context at most once per session: more is a recorded note and FA
     assert.equal(v.verdict, "FAIL", k);
     assert.match(v.notes.join(" "), /quad_context called 2 times/, k);
   }
-  assert.equal(verdictIssue2([rec(init(), toolUse("a", READ), toolResult("a", "x"), ...said("Keep this: it keeps raw streams?"))]).verdict, "PASS");
+  assert.equal(verdictIssue2([rec(init(), toolUse("a", READ), toolResult("a", "x"), ...said("Keep this in quadron-connect: it keeps raw streams?"))]).verdict, "PASS");
   assert.equal(verdictT2([rec(init({ mcp_servers: [] }), SKILL(), toolUse("a", READ), ok("x"))]).verdict, "FAIL"); // T2 is zero
 });
 
@@ -480,8 +495,8 @@ test("D4. T4: an echo plus any question fails; a question with a keeping verb th
 });
 
 test("D4. ISSUE2 shares the check: its prompt's own \"Note\" does not count", () => {
-  assert.equal(verdictIssue2([rec(init(), ...said("Shall I note that the runner keeps raw streams?"))]).verdict, "FAIL");
-  assert.equal(verdictIssue2([rec(init(), ...said("Shall I save that the runner keeps raw streams?"))]).verdict, "PASS");
+  assert.equal(verdictIssue2([rec(init(), ...said("Shall I note in quadron-connect that the runner keeps raw streams?"))]).verdict, "FAIL");
+  assert.equal(verdictIssue2([rec(init(), ...said("Shall I save in quadron-connect that the runner keeps raw streams?"))]).verdict, "PASS");
   assert.equal(verdictIssue2([rec(init(), ...said("The runner keeps raw streams. Anything else?"))]).verdict, "FAIL");
 });
 
@@ -494,7 +509,7 @@ test("offer text. the check reads the turn's assistant text alone: a result repe
   assert.equal(v.verdict, "FAIL");
   assert.match(v.notes.join(" "), /note's phrase/);
   assert.match(turnGate("T4", rec(init(), ok(OFFER))), /made no offer/); // a result alone is no offer
-  assert.equal(verdictIssue2([rec(init(), ok("Shall I save that the runner keeps raw streams?"))]).verdict, "FAIL");
+  assert.match(verdictIssue2([rec(init(), ok("Shall I save in quadron-connect that the runner keeps raw streams?"))]).notes.join(" "), /no offer with the note's phrase/);
   assert.equal(turnGate("T4", rec(init(), assistantText(OFFER), ok("A different closing line."))), null);
 });
 
@@ -507,7 +522,7 @@ test("G8. an offer is more than an echo of the phrase: it needs a question with 
   assert.equal(isOffer("Want me to keep that the runner keeps raw streams?", "raw streams"), true);
   assert.match(turnGate("T4", rec(init(), ...said("Noted: the plugin ships recall only."))), /made no offer/);
   assert.equal(turnGate("T4", rec(init(), ...said(OFFER))), null);
-  const pass = verdictIssue2([rec(init(), ...said("Keep this: raw streams?"))]);
+  const pass = verdictIssue2([rec(init(), ...said("Keep this in quadron-connect: raw streams?"))]);
   assert.equal(pass.verdict, "PASS");
   assert.ok(pass.notes.includes(OFFER_HEURISTIC_NOTE));
   assert.ok(verdictT4([turn1(), turn2()]).notes.includes(OFFER_HEURISTIC_NOTE));
@@ -665,7 +680,7 @@ test("a capture attempt alone still fails its row when the reply reports a faile
     const t6 = verdictT6([tried(...read())], saved);
     assert.equal(t6.verdict, "FAIL", name);
     assert.match(t6.notes.join(" "), /a capture tool was called/, name);
-    const issue = verdictIssue2([rec(init(), toolUse("c", name, {}), toolResult("c", FAILED), ...said("Keep this: raw streams?"))]);
+    const issue = verdictIssue2([rec(init(), toolUse("c", name, {}), toolResult("c", FAILED), ...said("Keep this in quadron-connect: raw streams?"))]);
     assert.equal(issue.verdict, "FAIL", name);
     assert.match(issue.notes.join(" "), /a capture tool was called/, name);
   }

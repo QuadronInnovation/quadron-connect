@@ -304,8 +304,8 @@ test("H4. every init-time plugin_errors path stops before the prompt: early, dur
 });
 
 const server = (status) => [{ name: "quadron", status }];
-const offerAfter = (initMsg) => [initMsg, assistantText("Shall I save that the runner keeps raw streams?"), result(0.1, { session_id: "s2", result: "Shall I save that the runner keeps raw streams?" })];
-const readThenOffer = (initMsg) => [initMsg, toolUse("r", READ), toolResult("r", "x"), assistantText("Shall I save that the runner keeps raw streams?"), result(0.1, { session_id: "s2", result: "Shall I save that the runner keeps raw streams?" })];
+const offerAfter = (initMsg) => [initMsg, assistantText("Shall I save in quadron-connect that the runner keeps raw streams?"), result(0.1, { session_id: "s2", result: "Shall I save in quadron-connect that the runner keeps raw streams?" })];
+const readThenOffer = (initMsg) => [initMsg, toolUse("r", READ), toolResult("r", "x"), assistantText("Shall I save in quadron-connect that the runner keeps raw streams?"), result(0.1, { session_id: "s2", result: "Shall I save in quadron-connect that the runner keeps raw streams?" })];
 const pendingInit = (o = {}) => init({ session_id: "s2", mcp_servers: server("pending"), ...o });
 
 // Ended pending with no connector call: the prompt went and the row ran, so it is charged at its
@@ -2124,8 +2124,8 @@ test("F25. token test: a secret in tool output and answer text never reaches str
     return [init({ session_id: "s", cwd: `${SOME_HOME}/cwd` }),
       toolUse("r", READ, { q: leak, access_token: "plain-under-a-key" }),
       toolResult("r", leak),
-      assistantText(`Keep this? It keeps raw streams ${leak}`),
-      result(0.1, { session_id: "s", result: `Keep this? It keeps raw streams ${leak}` })];
+      assistantText(`Keep this in quadron-connect? It keeps raw streams ${leak}`),
+      result(0.1, { session_id: "s", result: `Keep this in quadron-connect? It keeps raw streams ${leak}` })];
   }]);
   assert.equal(r.exitCode, 0);
   const dir = path.join(b.out, b.attemptDirs()[0]);
@@ -2146,8 +2146,8 @@ test("G10. evidence keeps cwd and path arguments readable and masks only the hom
     init({ session_id: "s" }),
     toolUse("r", READ, { paths: readable, under_home: `${SOME_HOME}/private/file`, url: "https://me:hunter2@host.example/x" }),
     toolResult("r", `read ${readable.join(" ")} token ${KEY}`),
-    assistantText("Keep this? It keeps raw streams."),
-    result(0.1, { session_id: "s", result: "Keep this? It keeps raw streams." }),
+    assistantText("Keep this in quadron-connect? It keeps raw streams."),
+    result(0.1, { session_id: "s", result: "Keep this in quadron-connect? It keeps raw streams." }),
   ]]);
   assert.equal(r.exitCode, 0);
   const dir = path.join(b.out, b.attemptDirs()[0]);
