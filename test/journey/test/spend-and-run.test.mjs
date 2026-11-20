@@ -877,7 +877,7 @@ test("F16. capture_owner_unavailable is a finding on an error result and on a no
   assert.equal(r.exitCode, 1); // a row verdict, not a crash
 
   const c = box();
-  const plain = await run(c, c.argv("ISSUE2"), [[init({ session_id: "i" }), toolUse("r", READ), toolResult("r", "capture_owner_unavailable"), assistantText("Keep this: it keeps raw streams?"), result(0.1, { session_id: "i", result: "Keep this: it keeps raw streams?" })]]);
+  const plain = await run(c, c.argv("ISSUE2"), [[init({ session_id: "i" }), toolUse("r", READ), toolResult("r", "capture_owner_unavailable"), assistantText("Keep this in quadron-connect: it keeps raw streams?"), result(0.1, { session_id: "i", result: "Keep this in quadron-connect: it keeps raw streams?" })]]);
   assert.equal(c.findings()[0].kind, "capture_owner_unavailable");
   assert.equal(plain.r.exitCode, 0);
 });
@@ -909,7 +909,7 @@ test("F16. an MCP 401 in a row is exit 4, verdict auth failure, no finding: on a
 
 test("F16. a bare 401 in an answer is not an auth failure", async () => {
   const b = box();
-  const text = "Keep this? Room 401 keeps raw streams, unauthorized or not";
+  const text = "Keep this in quadron-connect? Room 401 keeps raw streams, unauthorized or not";
   const { r } = await run(b, b.argv("ISSUE2"), [[init({ session_id: "i" }), assistantText(text), result(0.1, { session_id: "i", result: text })]]);
   assert.equal(r.exitCode, 0);
 });
@@ -934,7 +934,7 @@ test("G14. other 401 wordings read as an auth failure: errored tool text, a stat
     assert.equal(r.summary.verdict, "auth failure");
   }
   const c = box();
-  const notAuth = await run(c, c.argv("ISSUE2"), [[init({ session_id: "i" }), toolUse("r", READ), toolResult("r", "the word unauthorized, in a result that is no error"), assistantText("Keep this: it keeps raw streams?"), result(0.1, { session_id: "i", result: "Keep this: it keeps raw streams?" })]]);
+  const notAuth = await run(c, c.argv("ISSUE2"), [[init({ session_id: "i" }), toolUse("r", READ), toolResult("r", "the word unauthorized, in a result that is no error"), assistantText("Keep this in quadron-connect: it keeps raw streams?"), result(0.1, { session_id: "i", result: "Keep this in quadron-connect: it keeps raw streams?" })]]);
   assert.equal(notAuth.r.exitCode, 0);
 });
 

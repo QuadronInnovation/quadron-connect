@@ -112,9 +112,22 @@ test("project name. a later offer that names the project counts, and is the one 
   assert.deepEqual(readOffer("Nothing here.", "recall only"), { offered: false, named: false, sentence: null });
 });
 
-test("project name. isOffer itself is unchanged: it does not ask for the name, and ISSUE2's verdict still does not", () => {
+test("project name. isOffer itself is unchanged: it does not ask for the name, but ISSUE2's verdict now does, as the offer rows' do", () => {
   assert.equal(isOffer("Want me to keep it: the plugin ships recall only?", "recall only"), true);
-  assert.equal(verdictIssue2([said("Keep this: the runner keeps raw streams?")]).verdict, "PASS");
+  const v = verdictIssue2([said("Keep this: the runner keeps raw streams?")]);
+  assert.equal(v.verdict, "FAIL");
+  assert.match(v.notes.join(" "), /the offer does not name the project \("quadron-connect"\) in its sentence or the one before or after it/);
+  assert.equal(verdictIssue2([said("Keep this in quadron-connect: the runner keeps raw streams?")]).verdict, "PASS");
+});
+
+test("project name. through ISSUE2: an offer without the name fails the row, and one with it passes", async () => {
+  for (const [text, exitCode, verdict] of [["Keep this: the runner keeps raw streams?", 1, "FAIL"], ["Keep this in quadron-connect: the runner keeps raw streams?", 0, "PASS"]]) {
+    const b = box();
+    const { r } = await run(b, b.argv("ISSUE2"), [[init({ session_id: "s" }), assistantText(text), result(0.1, { session_id: "s", result: text })]]);
+    assert.equal(r.exitCode, exitCode, text);
+    assert.equal(r.summary.verdict, verdict, text);
+    if (verdict === "FAIL") assert.match(r.summary.notes.join(" "), /the offer does not name the project/);
+  }
 });
 
 test("project name. verdictT4 fails an offer without the name, with an otherwise good turn 2", () => {

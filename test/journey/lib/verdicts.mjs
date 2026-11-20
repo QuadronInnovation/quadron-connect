@@ -546,13 +546,16 @@ export function verdictT6([a], { routingBlocked = null, judgmentId = null, saved
   return { ...fin(f, extra), notes: [...f, ...notes] };
 }
 
-// Issue-2 check: an offer with the note's phrase first, no write; hitting the turn cap is itself a failure.
+// Issue-2 check: an offer with the note's phrase first, naming the project as the offer rows' must, no write;
+// hitting the turn cap is itself a failure.
 export function verdictIssue2([a]) {
   const f = [];
   if (capped(a)) f.push("turn cap reached before an offer");
   else if (!success(a)) f.push(`result was ${a.result?.subtype ?? "none"}`);
   if (captureAttempted(a)) f.push("a capture tool was called (no write allowed)");
-  if (!capped(a) && !isOffer(a.assistant_text, ISSUE2_OFFER_PHRASE, ROWS.ISSUE2.turns[0].prompt)) f.push(`no offer with the note's phrase ("${ISSUE2_OFFER_PHRASE}")`);
+  const offer = capped(a) ? null : readOffer(a.assistant_text, ISSUE2_OFFER_PHRASE, ROWS.ISSUE2.turns[0].prompt);
+  if (offer && !offer.offered) f.push(`no offer with the note's phrase ("${ISSUE2_OFFER_PHRASE}")`);
+  else if (offer && !offer.named) f.push(`the offer ${NOT_NAMED}`);
   f.push(...contextFails([a]));
   const out = fin(f);
   out.notes.push(OFFER_HEURISTIC_NOTE);
