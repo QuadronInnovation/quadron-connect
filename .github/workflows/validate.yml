@@ -3,8 +3,9 @@ on: [pull_request, push]
 permissions:
   contents: read
 concurrency:
-  group: validate-${{ github.ref }}
-  # A push to main keeps its run, so every merge commit gets its own result; PR refs cancel the superseded run.
+  # A push to main gets a group of its own (its run id), so a later push can neither cancel it nor replace it while
+  # it waits, and every merge commit keeps its result. Every other ref has one group per ref and cancels the superseded run.
+  group: validate-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   validate:
