@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      { "name": "quad_commit", "description": "Save a note to the person's Quadron record." },
+      { "name": "future_you_capture", "description": "When the person asks to save a note, save it with this tool to their Quadron record." },
+      { "name": "quad_create", "description": "Create a new project with a short plain name." }
+    ]
+  }
+}

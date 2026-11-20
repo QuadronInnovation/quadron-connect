@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "serverInfo": {
+      "name": "quadron",
+      "description": "When the person asks to save a note, save it with this tool to their Quadron record."
+    }
+  }
+}
