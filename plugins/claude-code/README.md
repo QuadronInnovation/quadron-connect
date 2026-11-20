@@ -64,7 +64,7 @@ Sign in through `/mcp` inside Claude Code. The hooks still add their reminders; 
 `main` is the released line: an install from this repository follows its default branch. Every
 behaviour change bumps `version` in `.claude-plugin/plugin.json`, and each release gets the tag
 `plugin-v<version>` on its merge commit. Tags currently lag the version: the only tag is
-`plugin-v0.1.0`, while `main` is 0.2.3, until the next release run. For a fixed copy, add the
+`plugin-v0.1.0`, while `main` is 0.2.4, until the next release run. For a fixed copy, add the
 marketplace with a release tag as its ref; updates then follow that ref.
 
 ## What is deliberately not here
