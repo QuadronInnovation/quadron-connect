@@ -1,6 +1,5 @@
 ---
 type: llm
-arm: with-only
 ---
 The person typed a bare "remember this" with a pricing rule and did not name Quadron. The
 session has no quad_* tools, so Quadron is not connected and nothing can be saved there.

@@ -1,6 +1,5 @@
 ---
 type: llm
-arm: with-only
 ---
 The person asked to save a pricing decision to their Quadron record. The session has no quad_*
 tools, so Quadron is not connected and the save cannot happen. Judge only the final assistant

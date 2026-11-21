@@ -1,2 +1,3 @@
-# Written by `claude plugin eval` runs; never committed.
+# Kept out of git in case `claude plugin eval` writes run output here; where a run writes its
+# results is not determinable from the docs, so confirm this path on the first run.
 plugins/claude-code/evals/results/
