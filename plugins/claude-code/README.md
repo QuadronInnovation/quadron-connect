@@ -18,6 +18,7 @@ plugins/claude-code/
 │   ├── hooks.json
 │   ├── scripts/
 │   └── test/
+├── evals/                       # `claude plugin eval` cases (routing and reminders; see evals/README.md)
 └── README.md                    # this file
 ```
 
