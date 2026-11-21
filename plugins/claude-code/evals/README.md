@@ -224,11 +224,11 @@ All from https://code.claude.com/docs/en/plugin-evals, quoted verbatim.
 - Q23 (mocks): "A run never starts your plugin's real MCP servers unless you ask."
 - Q24 (eval directory): "If `evals/` is already taken by another tool, keep the suite in a
   different directory. You can record that directory in the plugin's `plugin.json` ... add
-  `\"experimental\": { \"evals\": \"quality/evals\" }`.
+  `\"experimental\": { \"evals\": \"quality/evals\" }`."
 - Q25 (command options): "`--max-cost-usd <usd>` | No ceiling | A ceiling on the run's
   list-price cost estimate, not on plan usage. Checked before each run starts. Once spent,
   nothing further starts; runs that already started finish, so spend can pass the ceiling by
   those runs."
 - Q26 (Grant tools): "To let cases use `Bash`, `Write`, `Edit`, `WebFetch`, or `WebSearch`,
   grant them yourself:" followed by `claude plugin eval . --allow-tools Write Edit "Bash(npm test *)"`
-- Edited quotes: Q13 contains a marked elision (...); Q21 collapses whitespace only."
+- Edited quotes: Q13 contains a marked elision (...); Q21 collapses whitespace only.
