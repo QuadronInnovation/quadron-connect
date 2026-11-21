@@ -12,16 +12,33 @@ determinable from the docs". No case has a measured result, pass rate or cost ye
 
 ## Run it
 
-`claude plugin eval` runs the suite (Q10). Its arguments and options (how to name the plugin,
-set three runs per case, or cap the cost) and where it writes results are not determinable from
-the docs as quoted here; read the page before the first run. `.gitignore` keeps
-`plugins/claude-code/evals/results/` out of git in case results land there; confirm the path on
-the first run.
+From the plugin root (`plugins/claude-code`), run every case under `evals/` (Q19, Q20):
+
+```
+claude plugin eval .
+```
+
+From the repository root, the target is the plugin directory (Q20):
+
+```
+claude plugin eval ./plugins/claude-code
+```
+
+Each case runs three times with the plugin and three times without it (Q19). To iterate on one
+case with a single run and no without-plugin arm, from the plugin root (Q19):
+
+```
+claude plugin eval . --case <case-name> --runs 1 --ablation none
+```
+
+Each run writes `evals/results/` (`plugins/claude-code/evals/results/` from the repository
+root), which `.gitignore` keeps out of git (Q21). An option for capping the cost is not
+determinable from the docs as quoted here.
 
 ## Cost
 
-- Agent runs: 9 cases x 3 runs with the plugin, and the same number again for the no-plugin
-  baseline (Q7) = 54 agent runs, each capped at 10 turns (`max_turns: 10`, the documented
+- Agent runs: 9 cases x 3 runs x 2 arms (with and without the plugin; "one case is six runs",
+  Q7, Q19) = 54 agent runs, each capped at 10 turns (`max_turns: 10`, the documented
   default, Q8).
 - Judge calls: three per `llm` grader per run (Q7). There are 2 `llm` graders
   (`capture-remember-this/asks-or-says-not-connected`, `capture-explicit-save/honest-no-save`),
@@ -40,35 +57,39 @@ filename without `.md` (Q1).
 
 | Case | Checks | Graders |
 |---|---|---|
-| `recall-what-did-i-decide` | "what did I decide" loads a skill; recall reminder present, capture reminder absent | `skill-fired`, `recall-reminder`, `no-capture-reminder` |
-| `recall-names-quadron` | naming Quadron with no hook phrase loads a skill from its description; no reminder | `skill-fired`, `no-recall-reminder`, `no-capture-reminder` |
-| `capture-remember-this` | bare "remember this" loads a skill and gets the capture reminder; asks in plain text; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim`, `asks-or-says-not-connected` (llm) |
-| `capture-explicit-save` | "save this to my Quadron record" loads a skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-save-claim`, `honest-no-save` (llm) |
-| `capture-stated-decision` | a decision stated as "we'll go with" loads a skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim` |
-| `quiet-coding-task` | a coding request calls no skill and gets no prompt reminder; SessionStart reminder present | `skill-not-fired`, `session-banner`, `no-recall-reminder`, `no-capture-reminder` |
-| `quiet-decision-records` | a general question about team decision records calls no skill | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
-| `quiet-git-keep-changes` | near-miss wording ("remind me", "keep the changes") calls no skill and gets no reminder | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
-| `quiet-mcp-explainer` | a general MCP question calls no skill | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
+| `recall-what-did-i-decide` | "what did I decide" loads the quadron skill; recall reminder present, capture reminder absent | `skill-fired`, `recall-reminder`, `no-capture-reminder` |
+| `recall-names-quadron` | naming Quadron with no hook phrase loads the quadron skill from its description; no reminder | `skill-fired`, `no-recall-reminder`, `no-capture-reminder` |
+| `capture-remember-this` | bare "remember this" loads the quadron skill and gets the capture reminder; asks in plain text; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim`, `asks-or-says-not-connected` (llm) |
+| `capture-explicit-save` | "save this to my Quadron record" loads the quadron skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-save-claim`, `honest-no-save` (llm) |
+| `capture-stated-decision` | a decision stated as "we'll go with" loads the quadron skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim` |
+| `quiet-coding-task` | a coding request leaves the quadron skill unused and gets no prompt reminder; SessionStart reminder present | `skill-not-fired`, `session-banner`, `no-recall-reminder`, `no-capture-reminder` |
+| `quiet-decision-records` | a general question about team decision records leaves the quadron skill unused | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
+| `quiet-git-keep-changes` | near-miss wording ("remind me", "keep the changes") leaves the quadron skill unused and gets no reminder | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
+| `quiet-mcp-explainer` | a general MCP question leaves the quadron skill unused | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
 
 Case conventions:
 
-- Every `prompt.md` sets only `max_turns: 10` (the default, stated explicitly) and
+- Every `prompt.md` sets `max_turns: 10` (the default, stated explicitly) and
   `allowed_tools` (Q8). Every case lists `Skill`
   (Q8, Q9), so the Skill tool is available because the docs say listed read-only tools are
   granted, not by assumption. `capture-remember-this` and `capture-stated-decision` also list
   `AskUserQuestion` (Q9), so that `no-ask-tool` checks a call that could happen.
-- What each case checks is in the table above; no other frontmatter fields are set, since no
-  others are determinable from the docs.
+- Every `prompt.md` also sets `description` and `tags` (Q16). The description, which is for
+  humans and not used at run time, says what the case checks; the tags (`should-fire`,
+  `should-not-fire`, `recall`, `capture`, `hook-reminder` and so on) are labels for `--tag`
+  filtering. `name` is not set, so it defaults to the directory name (Q16).
 
 Grader conventions:
 
-- `skill-fired`: `tool_used` on `Skill`, `min: 1` (Q12 names `min` and `max`). Which skill was
-  called is not checked: no key for matching a tool's input is determinable from the docs. In a
-  two-arm run the docs report every `tool_used` grader whose `tool` is `Skill` with
-  `scored: false` and leave it out of the score in both arms (Q4), so read this row in the
-  report, not the score.
-- `skill-not-fired`: `tool_used` on `Skill`, `min: 0`, `max: 0` (Q12), `arm: both` (Q5), so it is
-  scored in both arms. It forbids any Skill call, not only `quadron`.
+- `skill-fired`: `tool_used` on `Skill` with
+  `input_match: '"skill"\s*:\s*"(?:[\w-]+:)?quadron"'` and `min: 1` (Q14, Q15). `quadron` is
+  the skill's directory name under `skills/` (`skills/quadron/SKILL.md`), the name Claude
+  invokes it by; the optional `[\w-]+:` prefix also matches the namespaced
+  `plugin-name:quadron` form (Q15). In a two-arm run the docs report every `tool_used` grader
+  whose `tool` is `Skill` with `scored: false` and leave it out of the score in both arms (Q4),
+  so read this row in the report, not the score.
+- `skill-not-fired`: the same `input_match` with `min: 0`, `max: 0` (Q12, Q14) and `arm: both`
+  (Q5, Q18), so it is scored in both arms. It forbids only calls to the quadron skill.
 - `no-ask-tool`: `tool_used` on `AskUserQuestion`, `min: 0`, `max: 0` (Q12).
 - Reminder graders (all rest on the unverified assumption that hook output appears in the
   trace; see "Assumptions not yet checked by a run"): `regex` (Q11) on `target: trace` (Q13)
@@ -82,33 +103,34 @@ Grader conventions:
 - `no-save-claim`: `regex` on `target: last_message` (Q3), `match: not_contains` (Q11),
   `arm: both` (Q5), for affirmative save wording ("saved it to your Quadron record", "Quadron
   received it"); a lookbehind excludes negated forms ("Nothing was saved to Quadron", "I haven't
-  saved it to your record"). The pattern is a JavaScript regex (Q11); capital letters are spelled
-  out as character classes because no regex-flags key is determinable from the docs. It is a
+  saved it to your record"). The pattern is a JavaScript regex (Q11), matched
+  case-insensitively with `flags: i`, since inline `(?i)` isn't supported (Q17). It is a
   heuristic; the `llm` graders cover what it cannot.
 - `llm` graders: the file body is the criteria, and a judge model votes PASS in at least two of
   three votes (Q2).
-- Arms: apart from Q4 (Skill graders) and Q5 (`arm: both`), how a grader is treated in the
+- Arms: apart from Q4 (Skill graders) and Q5, Q18 (`arm: both`, `arm: with-only`), how a grader is treated in the
   without-plugin arm is not determinable from the docs. The reminder, `no-ask-tool` and `llm`
   graders set no `arm`; if the without-plugin arm scores them, the reminder graders that expect
   a line fail there by construction. Check the first run's report before reading the score.
 
 ## What runs see
 
-A run loads this plugin's skills, hooks and agents and runs on your machine, as you (Q10). What
-else it loads (user settings, CLAUDE.md, memory, other plugins, MCP servers) is not
-determinable from the docs. A run allows only the read-only tools the case lists, from a fixed
-set that has no MCP tools (Q9), and this plugin declares no MCP server (there is no
-`.mcp.json`; see "What is deliberately not here" in `../README.md`), so a run has no `quad_*`
-tools. The skill's rule for that state is to say Quadron is not connected. The should-fire
-cases therefore grade only that a skill loaded and that the reply claims no save.
+A run loads this plugin's skills, hooks and agents and runs on your machine, as you (Q10).
+Nothing personal or project-level loads: your user settings, hooks, `CLAUDE.md` files, MCP
+servers, other installed plugins, memory and skills are absent (Q22). A run never starts a
+plugin's real MCP servers unless asked (Q23), and this plugin declares none (there is no
+`.mcp.json`; see "What is deliberately not here" in `../README.md`). A run allows only the
+read-only tools the case lists, from a fixed set that has no MCP tools (Q9), so a run has no
+`quad_*` tools. The skill's rule for that state is to say Quadron is not connected. The
+should-fire cases therefore grade only that the quadron skill loaded and that the reply claims
+no save.
 
 ## Not covered, and why
 
 - Sign-in, tokens, OAuth, credentials and connector setup: out of scope for this suite. The
   `session-banner` grader looks for the plugin's static SessionStart line, not a sign-in prompt.
   The CLI's own hook ("Quadron is connected ...") belongs to `cli/` and is not part of the
-  plugin; since a run is "as you" (Q10), whether a hook installed in your own settings also runs
-  is not determinable from the docs, and it is not graded.
+  plugin; a run loads none of your own hooks (Q22), so it does not run and is not graded.
 - Reading from or writing to the record (`quad_context`, `quad_recall`, `quad_commit`,
   `future_you_capture` and the rest): no `quad_*` tool exists in a run (Q9).
 - The PostToolUse reminder (`hooks/scripts/memory-trigger.mjs`): it fires only after a Write or
@@ -132,12 +154,13 @@ cases therefore grade only that a skill loaded and that the reply claims no save
 
 `evals/` sits inside `plugins/claude-code`, and the marketplace entry's source is
 `./plugins/claude-code`, so a marketplace install ships this directory with the plugin. It is
-inert: no skill, hook or agent reads it. Its size is 42 files, 21504 bytes (measured
-with `git ls-files plugins/claude-code/evals` and a byte sum of those files). That
-`claude plugin eval` reads `evals/` by default is not determinable from the docs. Q6 says the
-suite's location can be given as "a relative path of plain directory names", which still sits
-below the plugin root and so would not keep the suite out of an install either; it would also
-add a manifest key that the pinned validator in CI has not been checked against. The npm
+inert: no skill, hook or agent reads it. Its size is 42 files, 27575 bytes (measured
+with `git ls-files plugins/claude-code/evals` and a byte sum of those files). `evals/` is
+the default location: `claude plugin eval .` runs "every case under `evals/`" (Q19). The
+manifest key `experimental.evals` can move the suite (Q24), but only to "a relative path of
+plain directory names" (Q6), which still sits inside the plugin root and so would still ship
+with an install; it would also add a manifest key that the pinned validator in CI has not been
+checked against. The npm
 package (`cli/package.json` `files`) does not include `plugins/`.
 
 ## Sources
@@ -170,3 +193,32 @@ All from https://code.claude.com/docs/en/plugin-evals, quoted verbatim.
 - Q12 (`tool_used` grader): "To assert a tool was never called, set both `min: 0` and `max: 0`"
 - Q13 (`trace` target): "The session as JSON, one message per line. A `regex` grader sees every
   message ... Quotes and newlines inside it are JSON-escaped"
+- Q14 (`tool_used` options row): "`tool_used` | `tool`, `input_match`, `min`, `max` | The
+  number of calls to `tool` whose JSON-encoded input matches the optional `input_match` regex is
+  between `min`, default 1, and `max`, default unlimited."
+- Q15 (Write a case manually): "Create `evals/first-case/graders/skill-fired.md`, replacing
+  `your-skill-name` with the skill's directory name under `skills/`, which is the name Claude
+  invokes it by:" followed by the example frontmatter `type: tool_used` / `tool: Skill` /
+  `input_match: '"skill"\s*:\s*"(?:[\w-]+:)?your-skill-name"'`, and "This passes when Claude
+  invoked that skill at least once during the run, including by its namespaced
+  `plugin-name:skill-name` form."
+- Q16 (`prompt.md` fields): "`name` | The directory name | Case name." / "`description` | |
+  For humans. Not used at run time" / "`tags` | `[]` | Labels for `--tag` filtering." /
+  "`expected_outcome` | | For humans. Not used at run time"
+- Q17 (`regex` row): "Put case-insensitivity in `flags: i`; inline `(?i)` isn't supported"
+- Q18 (grader frontmatter): "`arm` | unset | `with-only` excludes the grader from scoring in a
+  two-arm run; `both` forces a grader Claude Code would otherwise exclude to be scored in both
+  arms"
+- Q19 (quickstart): "Back at your shell in the plugin root, run every case under `evals/`:"
+  then `claude plugin eval .`; "Each case runs three times with your plugin and three times
+  without it, so one case is six runs."; and (iterate)
+  `claude plugin eval . --case <case-name> --runs 1 --ablation none`
+- Q20 (targets table): "A plugin's root directory, such as `.` | Every case under its eval
+  directory, with that plugin loaded"
+- Q21 (layout): "results/ # written by each run; add to .gitignore"
+- Q22 (isolation): "**Nothing personal or project-level loads.** Your user settings, hooks,
+  `CLAUDE.md` files, MCP servers, other installed plugins, memory, and skills are absent."
+- Q23 (mocks): "A run never starts your plugin's real MCP servers unless you ask."
+- Q24 (eval directory): "If `evals/` is already taken by another tool, keep the suite in a
+  different directory. You can record that directory in the plugin's `plugin.json` ... add
+  `\"experimental\": { \"evals\": \"quality/evals\" }`."

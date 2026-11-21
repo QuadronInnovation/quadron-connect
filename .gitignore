@@ -1,3 +1,2 @@
-# Kept out of git in case `claude plugin eval` writes run output here; where a run writes its
-# results is not determinable from the docs, so confirm this path on the first run.
+# Written by each `claude plugin eval` run; the plugin-evals docs say to add it to .gitignore.
 plugins/claude-code/evals/results/

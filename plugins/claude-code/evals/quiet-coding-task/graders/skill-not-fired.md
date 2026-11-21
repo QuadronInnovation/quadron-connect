@@ -1,9 +1,10 @@
 ---
 type: tool_used
 tool: Skill
+input_match: '"skill"\s*:\s*"(?:[\w-]+:)?quadron"'
 min: 0
 max: 0
 arm: both
 ---
-The Skill tool is never called, in either arm. This forbids any skill, not only quadron: no key
-for matching a tool's input is determinable from the docs.
+The quadron skill is never invoked, by its own name or its namespaced `plugin-name:quadron`
+form, in either arm (Q5, Q12, Q14 in evals/README.md). Calls to other skills are not checked.
