@@ -15,13 +15,13 @@ determinable from the docs". No case has a measured result, pass rate or cost ye
 From the plugin root (`plugins/claude-code`), run every case under `evals/` (Q19, Q20):
 
 ```
-claude plugin eval .
+claude plugin eval . --max-cost-usd <cap>
 ```
 
 From the repository root, the target is the plugin directory (Q20):
 
 ```
-claude plugin eval ./plugins/claude-code
+claude plugin eval ./plugins/claude-code --max-cost-usd <cap>
 ```
 
 Each case runs three times with the plugin and three times without it (Q19). To iterate on one
@@ -32,8 +32,10 @@ claude plugin eval . --case <case-name> --runs 1 --ablation none
 ```
 
 Each run writes `evals/results/` (`plugins/claude-code/evals/results/` from the repository
-root), which `.gitignore` keeps out of git (Q21). An option for capping the cost is not
-determinable from the docs as quoted here.
+root), which `.gitignore` keeps out of git (Q21). `--max-cost-usd <cap>` caps the run's
+list-price cost estimate, not plan usage; it is checked before each run starts, so runs already
+started finish and spend can pass the cap by those runs (Q25). `<cap>` is for the operator to
+fill in.
 
 ## Cost
 
@@ -134,8 +136,9 @@ no save.
 - Reading from or writing to the record (`quad_context`, `quad_recall`, `quad_commit`,
   `future_you_capture` and the rest): no `quad_*` tool exists in a run (Q9).
 - The PostToolUse reminder (`hooks/scripts/memory-trigger.mjs`): it fires only after a Write or
-  Edit of a memory file or CLAUDE.md, and a run allows only read-only tools from the Q9 list.
-  Whether any option grants Write or Edit is not determinable from the docs; left for later.
+  Edit of a memory file or CLAUDE.md, and a run allows only read-only tools from the Q9 list
+  unless the operator grants more with `--allow-tools` (Q26). Left for later: it would need a
+  Write or Edit grant.
 - The offer-then-yes flow over two turns, and the skill's resume behaviour: each case is one
   prompt.
 
@@ -153,14 +156,14 @@ no save.
 ## Where this directory sits
 
 `evals/` sits inside `plugins/claude-code`, and the marketplace entry's source is
-`./plugins/claude-code`, so a marketplace install ships this directory with the plugin. It is
-inert: no skill, hook or agent reads it. Its size is 42 files, 27575 bytes (measured
+`./plugins/claude-code`, so a marketplace install ships this directory with the plugin (an
+inference from this repo's layout, not a claim on the docs page). It is inert Markdown: no
+skill, hook or agent reads it. Its size is 42 files, 28345 bytes (measured
 with `git ls-files plugins/claude-code/evals` and a byte sum of those files). `evals/` is
 the default location: `claude plugin eval .` runs "every case under `evals/`" (Q19). The
 manifest key `experimental.evals` can move the suite (Q24), but only to "a relative path of
 plain directory names" (Q6), which still sits inside the plugin root and so would still ship
-with an install; it would also add a manifest key that the pinned validator in CI has not been
-checked against. The npm
+with an install. The npm
 package (`cli/package.json` `files`) does not include `plugins/`.
 
 ## Sources
@@ -221,4 +224,11 @@ All from https://code.claude.com/docs/en/plugin-evals, quoted verbatim.
 - Q23 (mocks): "A run never starts your plugin's real MCP servers unless you ask."
 - Q24 (eval directory): "If `evals/` is already taken by another tool, keep the suite in a
   different directory. You can record that directory in the plugin's `plugin.json` ... add
-  `\"experimental\": { \"evals\": \"quality/evals\" }`."
+  `\"experimental\": { \"evals\": \"quality/evals\" }`.
+- Q25 (command options): "`--max-cost-usd <usd>` | No ceiling | A ceiling on the run's
+  list-price cost estimate, not on plan usage. Checked before each run starts. Once spent,
+  nothing further starts; runs that already started finish, so spend can pass the ceiling by
+  those runs."
+- Q26 (Grant tools): "To let cases use `Bash`, `Write`, `Edit`, `WebFetch`, or `WebSearch`,
+  grant them yourself:" followed by `claude plugin eval . --allow-tools Write Edit "Bash(npm test *)"`
+- Edited quotes: Q13 contains a marked elision (...); Q21 collapses whitespace only."
