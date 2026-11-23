@@ -5,10 +5,14 @@ runs its eval suite on your machine, as you" (Q10). They check routing and remin
 whether the `quadron` skill loads on natural phrasing, whether it stays unused on unrelated
 requests, and whether the hooks' reminder lines reach the session.
 
-**This suite has never been run.** It was authored without running it, and every fact in it
-about the eval format rests on the public page https://code.claude.com/docs/en/plugin-evals,
-quoted under "Sources" below. Where that page does not settle a point, this README says "not
-determinable from the docs". No case has a measured result, pass rate or cost yet.
+**The full suite has not been run.** One case was run once: `recall-what-did-i-decide`, one
+run with `--ablation none`, on 2026-11-22, with an earlier prompt that did not name Quadron. It
+scored 0.33 (cost $0.07): `no-capture-reminder` passed, `recall-reminder` failed ("pattern not
+found in trace") and `skill-fired` failed (the Skill tool was not called). Every fact in this
+README about the eval format rests on the public page
+https://code.claude.com/docs/en/plugin-evals, quoted under "Sources" below. Where that page
+does not settle a point, this README says "not determinable from the docs". No other case has
+a measured result, pass rate or cost.
 
 ## Run it
 
@@ -147,8 +151,12 @@ no save.
 - Unverified: that hook output (`additionalContext` from UserPromptSubmit and the SessionStart
   stdout) appears in the run trace the `trace` target reads. Q10 says hooks load, and Q13 says the trace
   holds the session one message per line, but the docs do not say hook output appears in
-  `trace`. The first run must check this: if it does not appear, every reminder grader that
-  expects a line fails and every one that expects none passes vacuously.
+  `trace`. Still open after one run: in the single run above, `recall-reminder` did not find
+  its line in the trace, although run offline the hook emits that line for this case's current
+  prompt.
+  One run does not show whether the hook output is missing from the trace or the hook did not
+  fire. If it does not appear, every reminder grader that expects a line fails and every one
+  that expects none passes vacuously.
 - That the skill loads for a stated decision with no save request (`capture-stated-decision`);
   the skill's description lists that trigger, but it is the least explicit of the should-fire
   prompts.
@@ -158,7 +166,7 @@ no save.
 `evals/` sits inside `plugins/claude-code`, and the marketplace entry's source is
 `./plugins/claude-code`, so a marketplace install ships this directory with the plugin (an
 inference from this repo's layout, not a claim on the docs page). It is inert Markdown: no
-skill, hook or agent reads it. Its size is 42 files, 28392 bytes (measured
+skill, hook or agent reads it. Its size is 42 files, 28944 bytes (measured
 with `git ls-files plugins/claude-code/evals` and a byte sum of those files). `evals/` is
 the default location: `claude plugin eval .` runs "every case under `evals/`" (Q19). The
 manifest key `experimental.evals` can move the suite (Q24), but only to "a relative path of
