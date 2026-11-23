@@ -43,8 +43,8 @@ fill in.
 
 ## Cost
 
-- Agent runs: 9 cases x 3 runs x 2 arms (with and without the plugin; "one case is six runs",
-  Q7, Q19) = 54 agent runs, each capped at 10 turns (`max_turns: 10`, the documented
+- Agent runs: 10 cases x 3 runs x 2 arms (with and without the plugin; "one case is six runs",
+  Q7, Q19) = 60 agent runs, each capped at 10 turns (`max_turns: 10`, the documented
   default, Q8).
 - Judge calls: three per `llm` grader per run (Q7). There are 2 `llm` graders
   (`capture-remember-this/asks-or-says-not-connected`, `capture-explicit-save/honest-no-save`),
@@ -64,6 +64,7 @@ filename without `.md` (Q1).
 | Case | Checks | Graders |
 |---|---|---|
 | `recall-what-did-i-decide` | "what did I decide", naming Quadron, loads the quadron skill; recall reminder present, capture reminder absent | `skill-fired`, `recall-reminder`, `no-capture-reminder` |
+| `recall-bare-phrase` | "what did I decide" without naming Quadron, in a run with no quad_* tools, loads the quadron skill from its description; recall reminder present, capture reminder absent. The single run above used this prompt | `skill-fired`, `recall-reminder`, `no-capture-reminder` |
 | `recall-names-quadron` | naming Quadron with no hook phrase loads the quadron skill from its description; no reminder | `skill-fired`, `no-recall-reminder`, `no-capture-reminder` |
 | `capture-remember-this` | bare "remember this" loads the quadron skill and gets the capture reminder; asks in plain text; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim`, `asks-or-says-not-connected` (llm) |
 | `capture-explicit-save` | "save this to my Quadron record" loads the quadron skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-save-claim`, `honest-no-save` (llm) |
@@ -166,7 +167,7 @@ no save.
 `evals/` sits inside `plugins/claude-code`, and the marketplace entry's source is
 `./plugins/claude-code`, so a marketplace install ships this directory with the plugin (an
 inference from this repo's layout, not a claim on the docs page). It is inert Markdown: no
-skill, hook or agent reads it. Its size is 42 files, 28944 bytes (measured
+skill, hook or agent reads it. Its size is 46 files, 30266 bytes (measured
 with `git ls-files plugins/claude-code/evals` and a byte sum of those files). `evals/` is
 the default location: `claude plugin eval .` runs "every case under `evals/`" (Q19). The
 manifest key `experimental.evals` can move the suite (Q24), but only to "a relative path of
