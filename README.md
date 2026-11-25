@@ -27,4 +27,4 @@ Sign in through `/mcp` inside Claude Code. The hooks still add their reminders; 
 - Semantic version in `plugins/claude-code/.claude-plugin/plugin.json` and `cli/package.json`; tag each release on its merge commit (`plugin-vX.Y.Z`, `cli-vX.Y.Z`); see "Release" in `plugins/claude-code/README.md`.
 - Changes to the MCP contract (tool names, capture rules) are reviewed with the MCP server owner before release.
 
-Owner: Henry (@hndeau). The MCP server itself is not in this repository.
+The MCP server itself is not in this repository. Code owners are listed in `.github/CODEOWNERS`.
