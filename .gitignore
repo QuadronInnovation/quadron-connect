@@ -1,0 +1,2 @@
+# Written by each `claude plugin eval` run; the plugin-evals docs say to add it to .gitignore.
+plugins/claude-code/evals/results/
