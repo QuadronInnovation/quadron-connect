@@ -63,12 +63,12 @@ filename without `.md` (Q1).
 
 | Case | Checks | Graders |
 |---|---|---|
-| `recall-what-did-i-decide` | "what did I decide", naming Quadron, loads the quadron skill; recall reminder present, capture reminder absent | `skill-fired`, `recall-reminder`, `no-capture-reminder` |
-| `recall-bare-phrase` | "what did I decide" without naming Quadron, in a run with no quad_* tools, loads the quadron skill from its description; recall reminder present, capture reminder absent. The single run above used this prompt | `skill-fired`, `recall-reminder`, `no-capture-reminder` |
+| `recall-what-did-i-decide` | "what did I decide", naming Quadron, loads the quadron skill; says Quadron is not connected; capture reminder absent | `skill-fired`, `says-not-connected`, `no-capture-reminder` |
+| `recall-bare-phrase` | "what did I decide" without naming Quadron, in a run with no quad_* tools, loads the quadron skill from its description; says Quadron is not connected; capture reminder absent. The single run above used this prompt | `skill-fired`, `says-not-connected`, `no-capture-reminder` |
 | `recall-names-quadron` | naming Quadron with no hook phrase loads the quadron skill from its description; no reminder | `skill-fired`, `no-recall-reminder`, `no-capture-reminder` |
-| `capture-remember-this` | bare "remember this" loads the quadron skill and gets the capture reminder; asks in plain text; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim`, `asks-or-says-not-connected` (llm) |
-| `capture-explicit-save` | "save this to my Quadron record" loads the quadron skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-save-claim`, `honest-no-save` (llm) |
-| `capture-stated-decision` | a decision stated as "we'll go with" loads the quadron skill and gets the capture reminder; claims no save | `skill-fired`, `capture-reminder`, `no-ask-tool`, `no-save-claim` |
+| `capture-remember-this` | bare "remember this" loads the quadron skill; asks in plain text; claims no save | `skill-fired`, `no-ask-tool`, `no-save-claim`, `asks-or-says-not-connected` (llm) |
+| `capture-explicit-save` | "save this to my Quadron record" loads the quadron skill; claims no save | `skill-fired`, `no-save-claim`, `honest-no-save` (llm) |
+| `capture-stated-decision` | a decision stated as "we'll go with" loads the quadron skill; claims no save | `skill-fired`, `no-ask-tool`, `no-save-claim` |
 | `quiet-coding-task` | a coding request leaves the quadron skill unused and gets no prompt reminder; SessionStart reminder present | `skill-not-fired`, `session-banner`, `no-recall-reminder`, `no-capture-reminder` |
 | `quiet-decision-records` | a general question about team decision records leaves the quadron skill unused | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
 | `quiet-git-keep-changes` | near-miss wording ("remind me", "keep the changes") leaves the quadron skill unused and gets no reminder | `skill-not-fired`, `no-recall-reminder`, `no-capture-reminder` |
@@ -98,15 +98,20 @@ Grader conventions:
 - `skill-not-fired`: the same `input_match` with `min: 0`, `max: 0` (Q12, Q14) and `arm: both`
   (Q5, Q18), so it is scored in both arms. It forbids only calls to the quadron skill.
 - `no-ask-tool`: `tool_used` on `AskUserQuestion`, `min: 0`, `max: 0` (Q12).
-- Reminder graders (all rest on the unverified assumption that hook output appears in the
-  trace; see "Assumptions not yet checked by a run"): `regex` (Q11) on `target: trace` (Q13)
-  for the start of each hook line, which
-  holds no quotes, since quotes inside the trace are JSON-escaped (Q13). `match: not_contains`
-  (Q11) where the line must be absent; where it must be present the default applies (the pattern
-  "is found in the target", Q11). The patterns are the start of the texts in
+- Reminder graders: `regex` (Q11) on `target: trace` (Q13) for the start of each hook line,
+  which holds no quotes, since quotes inside the trace are JSON-escaped (Q13). `session-banner`
+  (SessionStart) requires its line; `no-capture-reminder` and `no-recall-reminder`
+  (UserPromptSubmit) use `match: not_contains` (Q11). No grader requires a UserPromptSubmit
+  line: that hook's output is injected as a system reminder, and "Neither channel produces a
+  visible transcript entry" (H1), so it cannot be found in `trace`, and the two `not_contains`
+  graders pass whether or not the hook fired. The patterns are the start of the texts in
   `hooks/scripts/session-banner.mjs` and `hooks/scripts/prompt-trigger.mjs`; change them with
   those scripts. Which prompts trigger which reminder was checked against `classifyPrompt` in
   `prompt-trigger.mjs`.
+- `says-not-connected` (recall cases): `regex` on `target: last_message` (Q3) for "not
+  connected" wording or "no quad_" tools, with `flags: i` (Q17). It checks the skill's rule for a
+  run with no `quad_*` tools: say Quadron is not connected. It replaces a `trace` grader for the
+  recall reminder (H1). It is a heuristic on wording.
 - `no-save-claim`: `regex` on `target: last_message` (Q3), `match: not_contains` (Q11),
   `arm: both` (Q5), for affirmative save wording ("saved it to your Quadron record", "Quadron
   received it"); a lookbehind excludes negated forms ("Nothing was saved to Quadron", "I haven't
@@ -116,9 +121,10 @@ Grader conventions:
 - `llm` graders: the file body is the criteria, and a judge model votes PASS in at least two of
   three votes (Q2).
 - Arms: apart from Q4 (Skill graders) and Q5, Q18 (`arm: both`, `arm: with-only`), how a grader is treated in the
-  without-plugin arm is not determinable from the docs. The reminder, `no-ask-tool` and `llm`
-  graders set no `arm`; if the without-plugin arm scores them, the reminder graders that expect
-  a line fail there by construction. Check the first run's report before reading the score.
+  without-plugin arm is not determinable from the docs. The reminder, `says-not-connected`,
+  `no-ask-tool` and `llm` graders set no `arm`; if the without-plugin arm scores them,
+  `session-banner` fails there by construction. Check the first run's report before reading the
+  score.
 
 ## What runs see
 
@@ -149,15 +155,9 @@ no save.
 
 ## Assumptions not yet checked by a run
 
-- Unverified: that hook output (`additionalContext` from UserPromptSubmit and the SessionStart
-  stdout) appears in the run trace the `trace` target reads. Q10 says hooks load, and Q13 says the trace
-  holds the session one message per line, but the docs do not say hook output appears in
-  `trace`. Still open after one run: in the single run above, `recall-reminder` did not find
-  its line in the trace, although run offline the hook emits that line for this case's current
-  prompt.
-  One run does not show whether the hook output is missing from the trace or the hook did not
-  fire. If it does not appear, every reminder grader that expects a line fails and every one
-  that expects none passes vacuously.
+- That the UserPromptSubmit hook fires in a run at all. Its output cannot be seen in `trace`
+  (H1), so no grader here observes it; the plugin-evals page does not say which hook events
+  run.
 - That the skill loads for a stated decision with no save request (`capture-stated-decision`);
   the skill's description lists that trigger, but it is the least explicit of the should-fire
   prompts.
@@ -167,7 +167,7 @@ no save.
 `evals/` sits inside `plugins/claude-code`, and the marketplace entry's source is
 `./plugins/claude-code`, so a marketplace install ships this directory with the plugin (an
 inference from this repo's layout, not a claim on the docs page). It is inert Markdown: no
-skill, hook or agent reads it. Its size is 46 files, 30266 bytes (measured
+skill, hook or agent reads it. Its size is 43 files, 31026 bytes (measured
 with `git ls-files plugins/claude-code/evals` and a byte sum of those files). `evals/` is
 the default location: `claude plugin eval .` runs "every case under `evals/`" (Q19). The
 manifest key `experimental.evals` can move the suite (Q24), but only to "a relative path of
@@ -177,7 +177,7 @@ package (`cli/package.json` `files`) does not include `plugins/`.
 
 ## Sources
 
-All from https://code.claude.com/docs/en/plugin-evals, quoted verbatim.
+All from https://code.claude.com/docs/en/plugin-evals, quoted verbatim, except H1, which is from the hooks page it names.
 
 - Q1: "Every grader file under `graders/` takes these keys in frontmatter, plus the options for
   its type. The grader's name is the filename without `.md`"
@@ -240,4 +240,7 @@ All from https://code.claude.com/docs/en/plugin-evals, quoted verbatim.
   those runs."
 - Q26 (Grant tools): "To let cases use `Bash`, `Write`, `Edit`, `WebFetch`, or `WebSearch`,
   grant them yourself:" followed by `claude plugin eval . --allow-tools Write Edit "Bash(npm test *)"`
+- H1 (https://code.claude.com/docs/en/hooks, UserPromptSubmit output): "Neither channel
+  produces a visible transcript entry. Plain stdout and the `additionalContext` value are each
+  injected as a system reminder that starts with the hook's name; Claude reads both."
 - Edited quotes: Q13 contains a marked elision (...); Q21 collapses whitespace only.
