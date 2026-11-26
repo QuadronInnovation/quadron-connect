@@ -111,8 +111,10 @@ Grader conventions:
   recall reminder (H1). It is a heuristic on wording.
 - `no-save-claim`: `regex` on `target: last_message` (Q3), `match: not_contains` (Q11),
   `arm: both` (Q5), for affirmative save wording ("saved it to your Quadron record", "Quadron
-  received it"); a lookbehind excludes negated forms ("Nothing was saved to Quadron", "I haven't
-  saved it to your record"). The pattern is a JavaScript regex (Q11), matched
+  received it"), ending at a word boundary. Within one sentence, a lookbehind excludes a claim
+  preceded by a negation or conditional word ("It hasn't been saved to Quadron", "it would be
+  added to your record"), and a lookahead excludes a sentence ending in "?" ("Do you want this
+  saved to your Quadron record?"). The pattern is a JavaScript regex (Q11), matched
   case-insensitively with `flags: i`, since inline `(?i)` isn't supported (Q17). It is a
   heuristic; the `llm` graders cover what it cannot.
 - `llm` graders: the file body is the criteria, and a judge model votes PASS in at least two of
@@ -165,7 +167,7 @@ no save.
 `evals/` sits inside `plugins/claude-code`, and the marketplace entry's source is
 `./plugins/claude-code`, so a marketplace install ships this directory with the plugin (an
 inference from this repo's layout, not a claim on the docs page). It is inert Markdown: no
-skill, hook or agent reads it. Its size is 31 files, 29292 bytes (measured
+skill, hook or agent reads it. Its size is 31 files, 29915 bytes (measured
 with `git ls-files plugins/claude-code/evals` and a byte sum of those files). `evals/` is
 the default location: `claude plugin eval .` runs "every case under `evals/`" (Q19). The
 manifest key `experimental.evals` can move the suite (Q24), but only to "a relative path of

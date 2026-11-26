@@ -1,7 +1,7 @@
 ---
 type: regex
 target: last_message
-pattern: '(?<!(?:not|n[''’]t|never|nothing (?:was|is|has been|got)|cannot be|can[''’]t be|couldn[''’]t be|won[''’]t be) )\b(?:saved|captured|added|filed|stored|recorded)(?: it| this| that)? (?:to|in|into) (?:your )?(?:Quadron|record)|\bQuadron received it\b'
+pattern: '(?<![^.!?\n]*(?:\b(?:not|never|nothing|would|will|could|can|should|shall|once|if|when|until|unless|want|wish)\b|n[''’]t\b)[^.!?\n]*)(?:\b(?:saved|captured|added|filed|stored|recorded)\b(?:\s+(?:it|this|that))?\s+(?:to|in|into)\s+(?:your\s+)?(?:Quadron|record)\b|\bQuadron received it\b)(?![^.!?\n]*\?)'
 flags: i
 match: not_contains
 arm: both
